@@ -1,5 +1,7 @@
 # Copilot GPT Proxy
 
+[简体中文](README.zh-CN.md) | English
+
 `copilot-gpt-proxy` is a local OpenAI-compatible proxy for making GitHub Copilot's custom-model workflow more tolerant of GPT tool-call protocol differences.
 
 The repository was bootstrapped from [yxlao/deepseek-cursor-proxy](https://github.com/yxlao/deepseek-cursor-proxy), which provides the HTTP server, streaming response handling, request normalization, tracing, and a strong test foundation. The original MIT license and attribution are preserved.
@@ -24,6 +26,12 @@ The Copilot/GPT compatibility guard is implemented for Chat Completions response
 - returns a bounded `empty_apply_patch` error if the retry is still empty.
 
 The proxy never invents patch content. Valid calls and non-`apply_patch` tools pass through normally. The inherited DeepSeek reasoning repair remains available for users of that provider. See [DESIGN.md](DESIGN.md) for the protocol boundary and trade-offs.
+
+> **Responses API is not supported yet.** The current server only exposes
+> `/v1/chat/completions`. If the client calls `/v1/responses`, or an upstream
+> Responses stream ends without `response.completed`, the client may report
+> `Responses stream ended without a completed response`. Capture a trace before
+> implementing an adapter; the proxy must not fabricate a completion event.
 
 The current executable is:
 
