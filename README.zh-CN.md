@@ -104,6 +104,33 @@ API Key 默认从 Copilot 请求中的 `Authorization: Bearer ...` 读取并转�
 - `reject`：不重试，直接返回有界错误；
 - `allow`：关闭保护，原样转发。
 
+## 显式导入 Copilot 配置
+
+代理不会扫描磁盘或自动枚举 Copilot 安装目录。用户可以明确指定一个 VS Code/Copilot `settings.json`：
+
+```powershell
+uv run copilot-gpt-proxy `
+  --copilot-settings "$env:APPDATA\Code\User\settings.json" `
+  --copilot-model-id gpt-5.4
+```
+
+只检查配置、不启动代理：
+
+```powershell
+uv run copilot-gpt-proxy `
+  --inspect-copilot-settings "$env:APPDATA\Code\User\settings.json"
+```
+
+隐私边界：
+
+- 只读取用户在命令行明确指定的单个文件；
+- 不扫描目录，不检测其他编辑器或 Copilot 安装；
+- 只保留或显示 `oaicopilot.baseUrl`，以及模型的 `id`、`baseUrl`、`apiMode`、`owned_by`；
+- 不访问 VS Code SecretStorage；
+- 不输出 API Key、自定义请求头或其他设置值。
+
+解析 JSON 时文件内容会在本地进程内短暂读取，但非白名单字段不会进入输出或代理配置。若所选模型使用 `openai-responses`，程序会明确拒绝启动，因为当前版本只支持 `openai` Chat Completions。
+
 ## 启动
 
 本地启动并显示详细日志：

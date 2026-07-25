@@ -54,6 +54,30 @@ max_tool_retries: 1
 
 Use `empty_apply_patch: reject` to block an empty call without retrying, or `empty_apply_patch: allow` to disable the guard. For streamed requests, the proxy buffers one complete assistant response so it can validate tool arguments before Copilot executes them.
 
+## Explicit Copilot settings import
+
+The proxy never scans disks for Copilot installations. A user may explicitly
+pass one VS Code/Copilot `settings.json` file:
+
+```powershell
+uv run copilot-gpt-proxy `
+  --copilot-settings "$env:APPDATA\Code\User\settings.json" `
+  --copilot-model-id gpt-5.4
+```
+
+Inspect the same file without starting the proxy:
+
+```powershell
+uv run copilot-gpt-proxy `
+  --inspect-copilot-settings "$env:APPDATA\Code\User\settings.json"
+```
+
+Only `oaicopilot.baseUrl` and the model's `id`, `baseUrl`, `apiMode`, and
+`owned_by` fields are retained or printed. The parser reads only the file named
+by the user; it does not enumerate directories, access VS Code SecretStorage,
+or print API keys and custom headers. An `openai-responses` model is rejected
+because this version supports only `openai` Chat Completions.
+
 ## Development
 
 Requirements: Python 3.10+ and `uv` (or an equivalent virtual environment).
