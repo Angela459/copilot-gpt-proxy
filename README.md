@@ -1,6 +1,6 @@
 # Copilot GPT Proxy
 
-简体中文 | [English](README.md)
+简体中文 | [English](README.en.md)
 
 `copilot-gpt-proxy` 是一个本地 OpenAI 兼容代理，用于缓解 GitHub Copilot 自定义模型工作流与 GPT 工具调用之间的协议兼容问题。
 

@@ -1,6 +1,6 @@
 # Copilot GPT Proxy
 
-[简体中文](README.zh-CN.md) | English
+[简体中文](README.md) | English
 
 `copilot-gpt-proxy` is a local OpenAI-compatible proxy for making GitHub Copilot's custom-model workflow more tolerant of GPT tool-call protocol differences.
 
