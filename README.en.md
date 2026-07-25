@@ -2,99 +2,76 @@
 
 [简体中文](README.md) | English
 
-`copilot-gpt-proxy` is a local OpenAI-compatible proxy for making GitHub Copilot's custom-model workflow more tolerant of GPT tool-call protocol differences.
+`copilot-gpt-proxy` is a local OpenAI-compatible proxy for GitHub Copilot App. It lets users access all ChatGPT models through third-party APIs while reducing failures and repeated actions caused by tool-call compatibility issues.
 
-The repository was bootstrapped from [yxlao/deepseek-cursor-proxy](https://github.com/yxlao/deepseek-cursor-proxy), which provides the HTTP server, streaming response handling, request normalization, tracing, and a strong test foundation. The original MIT license and attribution are preserved.
+See [DESIGN.md](DESIGN.md) for implementation details, protocol boundaries, and design trade-offs.
 
-## Why this project exists
+## Installation
 
-When GPT-5.4 is used through a third-party API in a coding agent, the model can emit an `apply_patch` tool call with an empty object (`{}`). The client then reports:
+Python 3.10+ and [uv](https://docs.astral.sh/uv/) are required.
 
-```text
-apply_patch requires a non-empty string input (the patch content)
+```powershell
+git clone git@github.com:Angela459/copilot-gpt-proxy.git
+cd copilot-gpt-proxy
+uv sync
 ```
 
-Some clients retry the same malformed call indefinitely. This is a model/tool-call integration failure, not normally a filesystem permission failure. The proxy is intended to make the boundary observable and recoverable without changing the Copilot application or the model selected by the user.
+## Configuration
 
-## Current status
-
-The Copilot/GPT compatibility guard is implemented for Chat Completions and Responses API outputs. It:
-
-- assembles streamed tool-call arguments before exposing them to Copilot;
-- recognizes both Responses `function_call` and free-form `custom_tool_call` items;
-- represents Copilot's free-form `apply_patch` as a required-input function on the first upstream request, avoiding a known empty custom-tool round trip;
-- restores the successful function response to Copilot's original `custom_tool_call` event shape and unwraps the raw patch input, so the client can execute its registered custom tool;
-- removes repeated prompt and tool definitions from Responses lifecycle events before returning them through the tunnel, while preserving the schema fields, output, and usage;
-- blocks completed `apply_patch` calls whose arguments or `input` contain no patch content;
-- removes known empty calls and their error outputs from the retry copy of Responses history;
-- retries once if the function response is still malformed; and
-- returns a bounded `empty_apply_patch` error if the retry is still empty.
-
-The proxy never invents patch content. Valid calls and non-`apply_patch` tools pass through normally. The inherited DeepSeek reasoning repair remains available for users of that provider. See [DESIGN.md](DESIGN.md) for the protocol boundary and trade-offs.
-
-> The server supports both `/v1/chat/completions` and `/v1/responses`. Responses
-> streams are buffered until `response.completed` so malformed tool calls can be
-> retried before Copilot sees them. An upstream stream that never completes is
-> returned as a bounded error; the proxy never fabricates a completion event.
-> Buffered SSE responses are connection-delimited rather than sent with a fixed
-> `Content-Length`, avoiding tunnel-layer false truncation errors.
-
-The current executable is:
-
-```text
-copilot-gpt-proxy
-```
-
-The default configuration path is:
+The first run creates:
 
 ```text
 ~/.copilot-gpt-proxy/config.yaml
 ```
 
-The guard is enabled by default:
+On Windows, this is usually:
 
-```yaml
-empty_apply_patch: retry_once
-max_tool_retries: 1
+```text
+C:\Users\your-name\.copilot-gpt-proxy\config.yaml
 ```
 
-Use `empty_apply_patch: reject` to block an empty call without retrying, or `empty_apply_patch: allow` to disable the guard. For streamed requests, the proxy buffers one complete assistant response so it can validate tool arguments before Copilot executes them.
+Set the third-party API URL and model:
 
-## Explicit Copilot settings import
+```yaml
+base_url: https://your-provider.example/v1
+model: your-model-id
 
-The proxy never scans disks for Copilot installations. A user may explicitly
-pass one VS Code/Copilot `settings.json` file:
+host: 127.0.0.1
+port: 9000
+ngrok: false
+```
+
+The API key is read from the Copilot request and forwarded by default. Do not commit real keys to the repository.
+
+## Connect Copilot App
+
+This project does not scan disks or search for Copilot installations. Explicitly provide the `settings.json` file used by Copilot and the model ID:
 
 ```powershell
 uv run copilot-gpt-proxy `
   --copilot-settings "$env:APPDATA\Code\User\settings.json" `
-  --copilot-model-id gpt-5.4
+  --copilot-model-id your-model-id
 ```
 
-Inspect the same file without starting the proxy:
+Inspect the configuration without starting the proxy:
 
 ```powershell
 uv run copilot-gpt-proxy `
   --inspect-copilot-settings "$env:APPDATA\Code\User\settings.json"
 ```
 
-Only `oaicopilot.baseUrl` and the model's `id`, `baseUrl`, `apiMode`, and
-`owned_by` fields are retained or printed. The parser reads only the file named
-by the user; it does not enumerate directories, access VS Code SecretStorage,
-or print API keys and custom headers. Both `openai` Chat Completions and
-`openai-responses` are supported.
+The program reads only the file explicitly selected by the user. It does not enumerate directories, access VS Code SecretStorage, or print API keys or custom headers.
 
-## Development
+## Start
 
-Requirements: Python 3.10+ and `uv` (or an equivalent virtual environment).
-
-```bash
-uv run python -m unittest discover -s tests
-uv run copilot-gpt-proxy --no-ngrok --port 9000 --verbose
+```powershell
+uv run copilot-gpt-proxy --no-ngrok --port 9000
 ```
 
-The proxy exposes the OpenAI-compatible `/v1/chat/completions` endpoint. Do not put real API keys in source files or trace fixtures.
+Default local URL:
 
-## Project name
+```text
+http://127.0.0.1:9000/v1
+```
 
-The name deliberately uses `GPT` instead of a model version. The proxy is a protocol bridge, not a replacement model, and should remain useful if the upstream model changes from GPT-5.4.
+Use ngrok or another HTTPS tunnel only when Copilot cannot access the local URL.
