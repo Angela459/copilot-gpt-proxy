@@ -190,9 +190,20 @@ def restore_custom_apply_patch_response(body: bytes, streaming: bool) -> bytes:
         if not isinstance(event, dict):
             rewritten.append(line)
             continue
+        original_type = event.get("type")
         restored = _restore_stream_event(event, item_names)
         if restored is None:
+            if rewritten and rewritten[-1].strip().startswith(b"event:"):
+                rewritten.pop()
             continue
+        restored_type = restored.get("type")
+        if (
+            restored_type != original_type
+            and isinstance(restored_type, str)
+            and rewritten
+            and rewritten[-1].strip().startswith(b"event:")
+        ):
+            rewritten[-1] = f"event: {restored_type}".encode("utf-8")
         rewritten.append(
             b"data: "
             + json.dumps(restored, ensure_ascii=False, separators=(",", ":")).encode(

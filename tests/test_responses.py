@@ -23,6 +23,15 @@ def _event(event: dict) -> bytes:
     return b"data: " + json.dumps(event, separators=(",", ":")).encode() + b"\n\n"
 
 
+def _named_event(event: dict) -> bytes:
+    return (
+        f"event: {event['type']}\n".encode()
+        + b"data: "
+        + json.dumps(event, separators=(",", ":")).encode()
+        + b"\n\n"
+    )
+
+
 def _responses_stream(arguments: str, completed: bool = True) -> bytes:
     item = {
         "id": "fc_patch",
@@ -235,6 +244,50 @@ class ResponsesAccumulatorTests(unittest.TestCase):
         invalid, completed = inspect_responses_body(restored, True)
         self.assertEqual(invalid, [])
         self.assertTrue(completed)
+
+    def test_restored_stream_has_no_orphan_event_frames(self) -> None:
+        arguments = json.dumps({"input": "*** Begin Patch\n*** End Patch"})
+        item = {
+            "id": "fc_patch",
+            "call_id": "call_patch",
+            "type": "function_call",
+            "name": "apply_patch",
+            "arguments": arguments,
+        }
+        source = _named_event(
+            {
+                "type": "response.output_item.added",
+                "output_index": 0,
+                "item": {**item, "arguments": ""},
+            }
+        )
+        source += _named_event(
+            {
+                "type": "response.function_call_arguments.delta",
+                "item_id": "fc_patch",
+                "output_index": 0,
+                "delta": arguments,
+            }
+        )
+        source += _named_event(
+            {
+                "type": "response.function_call_arguments.done",
+                "item_id": "fc_patch",
+                "output_index": 0,
+                "arguments": arguments,
+            }
+        )
+        source += _named_event(
+            {"type": "response.output_item.done", "output_index": 0, "item": item}
+        )
+        restored = restore_custom_apply_patch_response(source, True).decode("utf-8")
+
+        frames = [frame for frame in restored.split("\n\n") if frame.strip()]
+        self.assertTrue(frames)
+        self.assertTrue(all("data: " in frame for frame in frames))
+        self.assertNotIn("event: response.function_call_arguments.delta", restored)
+        self.assertNotIn("event: response.function_call_arguments.done", restored)
+        self.assertIn("event: response.custom_tool_call_input.done", restored)
 
     def test_detects_custom_patch_tool_without_matching_other_tools(self) -> None:
         self.assertTrue(
