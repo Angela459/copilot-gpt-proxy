@@ -1,69 +1,116 @@
 # Copilot GPT Proxy
 
-[简体中文](README.zh-CN.md) | English
+简体中文 | [English](README.md)
 
-`copilot-gpt-proxy` is a local OpenAI-compatible proxy for making GitHub Copilot's custom-model workflow more tolerant of GPT tool-call protocol differences.
+`copilot-gpt-proxy` 是一个本地 OpenAI 兼容代理，用于缓解 GitHub Copilot 自定义模型工作流与 GPT 工具调用之间的协议兼容问题。
 
-The repository was bootstrapped from [yxlao/deepseek-cursor-proxy](https://github.com/yxlao/deepseek-cursor-proxy), which provides the HTTP server, streaming response handling, request normalization, tracing, and a strong test foundation. The original MIT license and attribution are preserved.
+本项目基于 [yxlao/deepseek-cursor-proxy](https://github.com/yxlao/deepseek-cursor-proxy) 改造，复用了它的 HTTP 服务、请求规范化、SSE 流处理、trace 和测试基础。原项目的 MIT 许可证及作者信息均予以保留。
 
-## Why this project exists
+## 解决的问题
 
-When GPT-5.4 is used through a third-party API in a coding agent, the model can emit an `apply_patch` tool call with an empty object (`{}`). The client then reports:
+通过第三方 API 在编码代理中使用 GPT-5.4 时，模型可能生成参数为空的 `apply_patch` 调用：
+
+```text
+apply_patch {}
+```
+
+客户端执行后会报错：
 
 ```text
 apply_patch requires a non-empty string input (the patch content)
 ```
 
-Some clients retry the same malformed call indefinitely. This is a model/tool-call integration failure, not normally a filesystem permission failure. The proxy is intended to make the boundary observable and recoverable without changing the Copilot application or the model selected by the user.
+部分客户端还会反复重试同一个错误调用。当前代理针对 Chat Completions 和 Responses API 实现了以下保护：
 
-## Current status
+- 完整聚合流式工具调用参数后，再向 Copilot 输出；
+- 同时识别 Responses 的 `function_call` 和 FREEFORM `custom_tool_call`；
+- 第一次上游请求就把 Copilot 的 FREEFORM `apply_patch` 表示为 `input` 必填且非空的标准 function，避免已知必定为空的 custom 工具往返；
+- 上游成功后再还原为 Copilot 原始的 `custom_tool_call` 事件并解包出补丁原文，使客户端能够执行其已注册的 custom 工具；
+- 返回隧道前清除 Responses 生命周期事件中重复回显的提示词和工具定义，同时保留字段结构、输出与用量，避免数百 KB 的冗余响应触发连接提前结束；
+- 拦截参数或 `input` 中没有补丁内容的 `apply_patch`；
+- 从重试副本中移除已知的空调用及其错误回执，避免模型继续模仿错误历史；
+- 如果 function 响应仍然异常，最多重试一次；
+- 第二次仍为空时返回 `empty_apply_patch` 错误并立即终止；
+- 不伪造模型从未生成的补丁内容。
 
-The Copilot/GPT compatibility guard is implemented for Chat Completions and Responses API outputs. It:
+合法的 `apply_patch`、其他工具调用以及普通文本响应不会被拦截。
 
-- assembles streamed tool-call arguments before exposing them to Copilot;
-- recognizes both Responses `function_call` and free-form `custom_tool_call` items;
-- represents Copilot's free-form `apply_patch` as a required-input function on the first upstream request, avoiding a known empty custom-tool round trip;
-- restores the successful function response to Copilot's original `custom_tool_call` event shape and unwraps the raw patch input, so the client can execute its registered custom tool;
-- removes repeated prompt and tool definitions from Responses lifecycle events before returning them through the tunnel, while preserving the schema fields, output, and usage;
-- blocks completed `apply_patch` calls whose arguments or `input` contain no patch content;
-- removes known empty calls and their error outputs from the retry copy of Responses history;
-- retries once if the function response is still malformed; and
-- returns a bounded `empty_apply_patch` error if the retry is still empty.
+## 当前限制
 
-The proxy never invents patch content. Valid calls and non-`apply_patch` tools pass through normally. The inherited DeepSeek reasoning repair remains available for users of that provider. See [DESIGN.md](DESIGN.md) for the protocol boundary and trade-offs.
-
-> The server supports both `/v1/chat/completions` and `/v1/responses`. Responses
-> streams are buffered until `response.completed` so malformed tool calls can be
-> retried before Copilot sees them. An upstream stream that never completes is
-> returned as a bounded error; the proxy never fabricates a completion event.
-> Buffered SSE responses are connection-delimited rather than sent with a fixed
-> `Content-Length`, avoiding tunnel-layer false truncation errors.
-
-The current executable is:
+目前支持：
 
 ```text
-copilot-gpt-proxy
+POST /v1/chat/completions
+POST /v1/responses
 ```
 
-The default configuration path is:
+Responses API 的流会在代理内部缓冲到 `response.completed`，这样才能在交给 Copilot 之前检查工具调用。如果上游始终不发送完成事件，代理会返回有界错误，不会伪造 `response.completed`。
+
+缓冲后的 SSE 响应使用连接结束定界，不发送固定 `Content-Length`，避免 ngrok 等隧道层把正常结束误判为响应体截断。
+
+如果上游 Responses API 仍然提前断流，客户端可能看到：
+
+```text
+Responses stream ended without a completed response
+```
+
+这个错误表示上游没有在 SSE 流结束前发送 `response.completed`。可能原因包括：
+
+1. 第三方上游声称支持 Responses API，但提前关闭了流；
+2. 上游返回了 Chat Completions 格式，客户端却按 Responses 事件格式解析；
+3. 中间网络设备截断了 SSE 流。
+
+不能通过无条件伪造 `response.completed` 来修复，因为这可能把不完整的文本或工具参数标记为完整响应。需要先捕获实际请求和上游事件，再实现对应的协议适配器。
+
+## 安装
+
+需要 Python 3.10+ 和 [uv](https://docs.astral.sh/uv/)。
+
+```powershell
+git clone git@github.com:Angela459/copilot-gpt-proxy.git
+cd copilot-gpt-proxy
+uv sync
+```
+
+## 配置
+
+首次启动会创建：
 
 ```text
 ~/.copilot-gpt-proxy/config.yaml
 ```
 
-The guard is enabled by default:
+Windows 下通常位于：
+
+```text
+C:\Users\你的用户名\.copilot-gpt-proxy\config.yaml
+```
+
+根据第三方 API 修改主要配置：
 
 ```yaml
+base_url: https://你的第三方接口地址/v1
+model: gpt-5.4
+
+host: 127.0.0.1
+port: 9000
+ngrok: false
+
 empty_apply_patch: retry_once
 max_tool_retries: 1
 ```
 
-Use `empty_apply_patch: reject` to block an empty call without retrying, or `empty_apply_patch: allow` to disable the guard. For streamed requests, the proxy buffers one complete assistant response so it can validate tool arguments before Copilot executes them.
+API Key 默认从 Copilot 请求中的 `Authorization: Bearer ...` 读取并转发，不要把真实密钥提交到仓库。
 
-## Explicit Copilot settings import
+空调用策略：
 
-The proxy never scans disks for Copilot installations. A user may explicitly
-pass one VS Code/Copilot `settings.json` file:
+- `retry_once`：拦截并重试一次，默认值；
+- `reject`：不重试，直接返回有界错误；
+- `allow`：关闭保护，原样转发。
+
+## 显式导入 Copilot 配置
+
+代理不会扫描磁盘或自动枚举 Copilot 安装目录。用户可以明确指定一个 VS Code/Copilot `settings.json`：
 
 ```powershell
 uv run copilot-gpt-proxy `
@@ -71,30 +118,68 @@ uv run copilot-gpt-proxy `
   --copilot-model-id gpt-5.4
 ```
 
-Inspect the same file without starting the proxy:
+只检查配置、不启动代理：
 
 ```powershell
 uv run copilot-gpt-proxy `
   --inspect-copilot-settings "$env:APPDATA\Code\User\settings.json"
 ```
 
-Only `oaicopilot.baseUrl` and the model's `id`, `baseUrl`, `apiMode`, and
-`owned_by` fields are retained or printed. The parser reads only the file named
-by the user; it does not enumerate directories, access VS Code SecretStorage,
-or print API keys and custom headers. Both `openai` Chat Completions and
-`openai-responses` are supported.
+隐私边界：
 
-## Development
+- 只读取用户在命令行明确指定的单个文件；
+- 不扫描目录，不检测其他编辑器或 Copilot 安装；
+- 只保留或显示 `oaicopilot.baseUrl`，以及模型的 `id`、`baseUrl`、`apiMode`、`owned_by`；
+- 不访问 VS Code SecretStorage；
+- 不输出 API Key、自定义请求头或其他设置值。
 
-Requirements: Python 3.10+ and `uv` (or an equivalent virtual environment).
+解析 JSON 时文件内容会在本地进程内短暂读取，但非白名单字段不会进入输出或代理配置。`openai` Chat Completions 和 `openai-responses` 两种模式均可使用。
 
-```bash
-uv run python -m unittest discover -s tests
+## 启动
+
+本地启动并显示详细日志：
+
+```powershell
 uv run copilot-gpt-proxy --no-ngrok --port 9000 --verbose
 ```
 
-The proxy exposes the OpenAI-compatible `/v1/chat/completions` endpoint. Do not put real API keys in source files or trace fixtures.
+Chat Completions Base URL 为：
 
-## Project name
+```text
+http://127.0.0.1:9000/v1
+```
 
-The name deliberately uses `GPT` instead of a model version. The proxy is a protocol bridge, not a replacement model, and should remain useful if the upstream model changes from GPT-5.4.
+只有当 Copilot 不允许访问本地地址时，才需要使用 ngrok 或其他 HTTPS 隧道。
+
+## 诊断 Responses 流错误
+
+使用 trace 模式启动：
+
+```powershell
+uv run copilot-gpt-proxy `
+  --no-ngrok `
+  --port 9000 `
+  --verbose `
+  --trace-dir .\trace-dumps
+```
+
+复现一次错误后，检查 `trace-dumps` 中最新请求，重点确认：
+
+- 请求路径是 `/v1/chat/completions` 还是 `/v1/responses`；
+- 上游 `Content-Type` 是否为 `text/event-stream`；
+- 最后一个 SSE 事件是 `[DONE]`、`response.completed`、错误事件还是直接断流；
+- `apply_patch` 的名称和参数分别出现在哪些事件中。
+
+trace 可能包含提示词、文件内容和工具参数。提交 issue 或共享日志前必须删除 API Key、私有代码和其他敏感信息。
+
+## 开发与测试
+
+```powershell
+uv run --extra dev black --check src tests
+uv run --extra dev ruff check src tests
+uv run python -m unittest discover -s tests
+```
+
+当前测试覆盖非流式与流式参数聚合、首次空调用后的合法重试、连续空调用的重试上限，以及原项目已有的协议和缓存行为。真实第三方 API 测试不会在 CI 中执行。
+
+详细设计和 Responses API 适配边界见 [DESIGN.md](DESIGN.md)。
