@@ -186,6 +186,38 @@ class ResponsesAccumulatorTests(unittest.TestCase):
         self.assertEqual(len(payload["input"]), 7)
         self.assertIn("free-form custom tool", repaired["instructions"])
 
+    def test_retry_downgrades_custom_apply_patch_to_required_function_input(
+        self,
+    ) -> None:
+        custom_tool = {
+            "type": "custom",
+            "name": "apply_patch",
+            "description": "Edit files.",
+            "format": {"type": "grammar", "syntax": "lark", "definition": "..."},
+        }
+        other_tool = {"type": "custom", "name": "shell", "description": "Run it."}
+        payload = {
+            "input": "edit it",
+            "tools": [custom_tool, other_tool],
+            "tool_choice": {"type": "custom", "name": "apply_patch"},
+        }
+
+        repaired = repair_responses_request(payload)
+
+        patch_tool = repaired["tools"][0]
+        self.assertEqual(patch_tool["type"], "function")
+        self.assertEqual(patch_tool["name"], "apply_patch")
+        self.assertEqual(patch_tool["parameters"]["required"], ["input"])
+        self.assertEqual(
+            patch_tool["parameters"]["properties"]["input"]["minLength"], 1
+        )
+        self.assertFalse(patch_tool["strict"])
+        self.assertEqual(repaired["tools"][1], other_tool)
+        self.assertEqual(
+            repaired["tool_choice"], {"type": "function", "name": "apply_patch"}
+        )
+        self.assertEqual(payload["tools"][0], custom_tool)
+
 
 class _ResponsesUpstream(BaseHTTPRequestHandler):
     requests: list[dict] = []
@@ -201,13 +233,23 @@ class _ResponsesUpstream(BaseHTTPRequestHandler):
         payload = json.loads(self.rfile.read(length))
         self.__class__.requests.append(payload)
         empty = self.__class__.always_empty or len(self.__class__.requests) == 1
-        if self.__class__.custom:
+        patch_tool = next(
+            (
+                tool
+                for tool in payload.get("tools", [])
+                if isinstance(tool, dict) and tool.get("name") == "apply_patch"
+            ),
+            None,
+        )
+        if self.__class__.custom and (
+            not isinstance(patch_tool, dict) or patch_tool.get("type") == "custom"
+        ):
             tool_input = "" if empty else "*** Begin Patch\n*** End Patch"
             body = _custom_responses_stream(
                 tool_input, completed=not self.__class__.incomplete
             )
         else:
-            arguments = "{}" if empty else '{"patch":"*** Begin Patch\\n*** End Patch"}'
+            arguments = "{}" if empty else '{"input":"*** Begin Patch\\n*** End Patch"}'
             body = _responses_stream(arguments, completed=not self.__class__.incomplete)
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -263,7 +305,23 @@ class ResponsesIntegrationTests(unittest.TestCase):
         request = Request(
             f"{self.proxy.url}/v1/responses",
             data=json.dumps(
-                {"model": "gpt-5.4", "stream": True, "input": "edit it"}
+                {
+                    "model": "gpt-5.4",
+                    "stream": True,
+                    "input": "edit it",
+                    "tools": [
+                        {
+                            "type": "custom",
+                            "name": "apply_patch",
+                            "description": "Edit files.",
+                            "format": {
+                                "type": "grammar",
+                                "syntax": "lark",
+                                "definition": "...",
+                            },
+                        }
+                    ],
+                }
             ).encode(),
             method="POST",
             headers={
@@ -312,6 +370,8 @@ class ResponsesIntegrationTests(unittest.TestCase):
         self.assertIn(
             "free-form custom tool", _ResponsesUpstream.requests[1]["instructions"]
         )
+        self.assertEqual(_ResponsesUpstream.requests[0]["tools"][0]["type"], "custom")
+        self.assertEqual(_ResponsesUpstream.requests[1]["tools"][0]["type"], "function")
 
     def test_repeated_empty_custom_calls_return_bounded_error(self) -> None:
         _ResponsesUpstream.custom = True

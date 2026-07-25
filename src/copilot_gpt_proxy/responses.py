@@ -13,6 +13,11 @@ INCOMPLETE_RESPONSES_STREAM_ERROR = (
     "The proxy stopped after one compatibility retry."
 )
 
+APPLY_PATCH_FUNCTION_DESCRIPTION = (
+    "Apply a patch to files. The input field must contain the complete patch text, "
+    "starting with '*** Begin Patch' and ending with '*** End Patch'."
+)
+
 
 @dataclass
 class ResponsesAccumulator:
@@ -146,10 +151,53 @@ def repair_responses_request(payload: dict[str, Any]) -> dict[str, Any]:
     request_input = repaired.get("input")
     if isinstance(request_input, list):
         repaired["input"] = _remove_empty_apply_patch_history(request_input)
+    tools = repaired.get("tools")
+    if isinstance(tools, list):
+        repaired["tools"] = [_repair_tool(tool) for tool in tools]
+    tool_choice = repaired.get("tool_choice")
+    if (
+        isinstance(tool_choice, dict)
+        and tool_choice.get("type") == "custom"
+        and tool_choice.get("name") == "apply_patch"
+    ):
+        repaired["tool_choice"] = {"type": "function", "name": "apply_patch"}
     instructions = repaired.get("instructions")
     prefix = f"{instructions}\n\n" if isinstance(instructions, str) else ""
     repaired["instructions"] = prefix + REPAIR_INSTRUCTION
     return repaired
+
+
+def _repair_tool(tool: Any) -> Any:
+    if not isinstance(tool, dict):
+        return tool
+    if tool.get("type") != "custom" or tool.get("name") != "apply_patch":
+        return tool
+    description = tool.get("description")
+    if not isinstance(description, str) or not description.strip():
+        description = APPLY_PATCH_FUNCTION_DESCRIPTION
+    else:
+        description = f"{description.rstrip()} {APPLY_PATCH_FUNCTION_DESCRIPTION}"
+    return {
+        "type": "function",
+        "name": "apply_patch",
+        "description": description,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "input": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": (
+                        "Complete patch text from *** Begin Patch through "
+                        "*** End Patch."
+                    ),
+                }
+            },
+            "required": ["input"],
+            "additionalProperties": False,
+        },
+        "strict": False,
+    }
 
 
 def _remove_empty_apply_patch_history(items: list[Any]) -> list[Any]:
