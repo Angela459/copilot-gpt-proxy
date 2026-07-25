@@ -18,7 +18,7 @@ Some clients retry the same malformed call indefinitely. This is a model/tool-ca
 
 ## Current status
 
-The Copilot/GPT compatibility guard is implemented for Chat Completions responses. It:
+The Copilot/GPT compatibility guard is implemented for Chat Completions and Responses API outputs. It:
 
 - assembles streamed tool-call arguments before exposing them to Copilot;
 - blocks completed `apply_patch` calls whose arguments contain no patch content;
@@ -27,11 +27,10 @@ The Copilot/GPT compatibility guard is implemented for Chat Completions response
 
 The proxy never invents patch content. Valid calls and non-`apply_patch` tools pass through normally. The inherited DeepSeek reasoning repair remains available for users of that provider. See [DESIGN.md](DESIGN.md) for the protocol boundary and trade-offs.
 
-> **Responses API is not supported yet.** The current server only exposes
-> `/v1/chat/completions`. If the client calls `/v1/responses`, or an upstream
-> Responses stream ends without `response.completed`, the client may report
-> `Responses stream ended without a completed response`. Capture a trace before
-> implementing an adapter; the proxy must not fabricate a completion event.
+> The server supports both `/v1/chat/completions` and `/v1/responses`. Responses
+> streams are buffered until `response.completed` so malformed tool calls can be
+> retried before Copilot sees them. An upstream stream that never completes is
+> returned as a bounded error; the proxy never fabricates a completion event.
 
 The current executable is:
 
@@ -75,8 +74,8 @@ uv run copilot-gpt-proxy `
 Only `oaicopilot.baseUrl` and the model's `id`, `baseUrl`, `apiMode`, and
 `owned_by` fields are retained or printed. The parser reads only the file named
 by the user; it does not enumerate directories, access VS Code SecretStorage,
-or print API keys and custom headers. An `openai-responses` model is rejected
-because this version supports only `openai` Chat Completions.
+or print API keys and custom headers. Both `openai` Chat Completions and
+`openai-responses` are supported.
 
 ## Development
 

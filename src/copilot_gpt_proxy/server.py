@@ -28,6 +28,11 @@ from .logging import (
     configure_logging,
 )
 from .reasoning_store import ReasoningStore, conversation_scope
+from .responses import (
+    INCOMPLETE_RESPONSES_STREAM_ERROR,
+    inspect_responses_body,
+    repair_responses_request,
+)
 from .streaming import CursorReasoningDisplayAdapter, StreamAccumulator
 from .trace import TraceRequest, TraceWriter
 from .tool_guard import (
@@ -134,12 +139,24 @@ class DeepSeekProxyHandler(BaseHTTPRequestHandler):
                 self.headers.get("Content-Length", "0"),
                 self.headers.get("User-Agent", ""),
             )
-        if request_path not in {"/chat/completions", "/v1/chat/completions"}:
+        if request_path not in {
+            "/chat/completions",
+            "/v1/chat/completions",
+            "/responses",
+            "/v1/responses",
+        }:
             LOG.warning("rejected unsupported POST path=%s status=404", request_path)
             self._record_request_body_for_trace(trace)
             self._send_json(
                 404,
-                {"error": {"message": "Only /v1/chat/completions is supported"}},
+                {
+                    "error": {
+                        "message": (
+                            "Only /v1/chat/completions and /v1/responses "
+                            "are supported"
+                        )
+                    }
+                },
                 trace=trace,
             )
             self._finish_trace(trace, "rejected", http_status=404)
@@ -183,6 +200,15 @@ class DeepSeekProxyHandler(BaseHTTPRequestHandler):
             log_json("cursor request body", payload)
 
         log_cursor_request(payload, self.config)
+
+        if request_path in {"/responses", "/v1/responses"}:
+            self._proxy_responses_request(
+                payload,
+                cursor_authorization,
+                trace,
+                started,
+            )
+            return
 
         prepared = prepare_upstream_request(
             payload,
@@ -398,6 +424,173 @@ class DeepSeekProxyHandler(BaseHTTPRequestHandler):
                 )
         finally:
             spinner.stop()
+
+    def _proxy_responses_request(
+        self,
+        payload: dict[str, Any],
+        authorization: str,
+        trace: TraceRequest | None,
+        started: float,
+    ) -> None:
+        original_payload = dict(payload)
+        original_payload["model"] = str(
+            original_payload.get("model") or self.config.upstream_model
+        )
+        current_payload = original_payload
+        streaming = bool(original_payload.get("stream"))
+        upstream_url = f"{self.config.upstream_base_url}/responses"
+        headers = self._upstream_headers(streaming, authorization)
+        retry_limit = self._empty_apply_patch_retry_limit()
+
+        for attempt in range(retry_limit + 1):
+            body_bytes = json.dumps(
+                current_payload, ensure_ascii=False, separators=(",", ":")
+            ).encode("utf-8")
+            if trace is not None:
+                trace.record_upstream_request(
+                    url=upstream_url,
+                    headers=headers,
+                    body_bytes=body_bytes,
+                )
+            try:
+                response = urlopen(
+                    Request(
+                        upstream_url,
+                        data=body_bytes,
+                        method="POST",
+                        headers=headers,
+                    ),
+                    timeout=self.config.request_timeout,
+                )
+            except HTTPError as exc:
+                self._send_upstream_error(exc, trace=trace)
+                self._finish_trace(
+                    trace, "upstream_error", http_status=exc.code, stream=streaming
+                )
+                return
+            except URLError as exc:
+                self._send_json(
+                    502,
+                    {"error": {"message": f"Upstream request failed: {exc.reason}"}},
+                    trace=trace,
+                )
+                self._finish_trace(trace, "upstream_error", http_status=502)
+                return
+
+            with response:
+                upstream_status = getattr(response, "status", 200)
+                upstream_headers = response_headers(response)
+                response_body = self._read_responses_body(response, streaming)
+            invalid_calls, completed = inspect_responses_body(response_body, streaming)
+            if not invalid_calls and (completed or not streaming):
+                self._send_buffered_responses_response(
+                    upstream_status,
+                    upstream_headers,
+                    response_body,
+                    streaming,
+                    trace,
+                )
+                self._finish_trace(
+                    trace,
+                    "completed",
+                    http_status=upstream_status,
+                    stream=streaming,
+                    elapsed_ms=elapsed_ms(started),
+                )
+                return
+
+            reason = "empty_apply_patch" if invalid_calls else "incomplete_response"
+            LOG.warning(
+                "intercepted malformed Responses API output attempt=%s/%s reason=%s",
+                attempt + 1,
+                retry_limit + 1,
+                reason,
+            )
+            if attempt < retry_limit:
+                current_payload = repair_responses_request(original_payload)
+                continue
+
+            message = (
+                EMPTY_APPLY_PATCH_ERROR
+                if invalid_calls
+                else INCOMPLETE_RESPONSES_STREAM_ERROR
+            )
+            self._send_json(
+                502,
+                {
+                    "error": {
+                        "message": message,
+                        "type": reason,
+                        "code": reason,
+                        "tool_call_ids": invalid_calls,
+                    }
+                },
+                trace=trace,
+            )
+            self._finish_trace(
+                trace,
+                reason,
+                http_status=502,
+                retries=retry_limit,
+                stream=streaming,
+            )
+            return
+
+    @staticmethod
+    def _read_responses_body(response: Any, streaming: bool) -> bytes:
+        if not streaming:
+            return read_response_body(response)
+        parts: list[bytes] = []
+        while True:
+            line = response.readline()
+            if not line:
+                break
+            parts.append(line)
+            stripped = line.strip()
+            if not stripped.startswith(b"data:"):
+                continue
+            data = stripped[len(b"data:") :].strip()
+            try:
+                event = json.loads(data.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            if isinstance(event, dict) and event.get("type") == "response.completed":
+                break
+        return b"".join(parts)
+
+    def _send_buffered_responses_response(
+        self,
+        status: int,
+        upstream_headers: dict[str, str],
+        body: bytes,
+        streaming: bool,
+        trace: TraceRequest | None,
+    ) -> None:
+        content_type = upstream_headers.get(
+            "Content-Type",
+            "text/event-stream" if streaming else "application/json",
+        )
+        headers = {
+            "Content-Type": content_type,
+            "Content-Length": str(len(body)),
+            "Connection": "close",
+        }
+        if trace is not None:
+            trace.record_upstream_response(
+                status=status,
+                headers=upstream_headers,
+                body=body,
+                stream=streaming,
+            )
+            trace.record_cursor_response(status=status, headers=headers, body=body)
+        if not self._send_response_headers(
+            status,
+            list(headers.items()),
+            "sending Responses API headers",
+        ):
+            return
+        self.close_connection = True
+        self._write_to_client(body, "sending Responses API body", flush=True)
 
     def _guard_empty_apply_patch(
         self,
@@ -1469,11 +1662,11 @@ def main(argv: list[str] | None = None) -> int:
             configure_logging(verbose=bool(args.verbose))
             LOG.error("No Copilot model matched the requested selection")
             return 2
-        if selected_model.api_mode not in {None, "openai"}:
+        if selected_model.api_mode not in {None, "openai", "openai-responses"}:
             configure_logging(verbose=bool(args.verbose))
             LOG.error(
                 "Copilot model %s uses unsupported apiMode=%s; "
-                "only openai Chat Completions is supported",
+                "supported modes are openai and openai-responses",
                 selected_model.model_id,
                 selected_model.api_mode,
             )

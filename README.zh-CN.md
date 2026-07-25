@@ -32,29 +32,26 @@ apply_patch requires a non-empty string input (the patch content)
 
 ## 当前限制
 
-目前仅支持：
+目前支持：
 
 ```text
 POST /v1/chat/completions
-```
-
-尚未支持 OpenAI Responses API：
-
-```text
 POST /v1/responses
 ```
 
-如果 GitHub Copilot 或第三方 API 使用 Responses API，可能看到：
+Responses API 的流会在代理内部缓冲到 `response.completed`，这样才能在交给 Copilot 之前检查工具调用。如果上游始终不发送完成事件，代理会返回有界错误，不会伪造 `response.completed`。
+
+如果上游 Responses API 仍然提前断流，客户端可能看到：
 
 ```text
 Responses stream ended without a completed response
 ```
 
-这个错误表示客户端没有在 SSE 流结束前收到 `response.completed` 事件。可能原因包括：
+这个错误表示上游没有在 SSE 流结束前发送 `response.completed`。可能原因包括：
 
-1. 客户端实际请求了当前代理尚未支持的 `/v1/responses`；
-2. 第三方上游声称支持 Responses API，但提前关闭了流；
-3. 中间代理返回了 Chat Completions 格式，客户端却按 Responses 事件格式解析。
+1. 第三方上游声称支持 Responses API，但提前关闭了流；
+2. 上游返回了 Chat Completions 格式，客户端却按 Responses 事件格式解析；
+3. 中间网络设备截断了 SSE 流。
 
 不能通过无条件伪造 `response.completed` 来修复，因为这可能把不完整的文本或工具参数标记为完整响应。需要先捕获实际请求和上游事件，再实现对应的协议适配器。
 
@@ -129,7 +126,7 @@ uv run copilot-gpt-proxy `
 - 不访问 VS Code SecretStorage；
 - 不输出 API Key、自定义请求头或其他设置值。
 
-解析 JSON 时文件内容会在本地进程内短暂读取，但非白名单字段不会进入输出或代理配置。若所选模型使用 `openai-responses`，程序会明确拒绝启动，因为当前版本只支持 `openai` Chat Completions。
+解析 JSON 时文件内容会在本地进程内短暂读取，但非白名单字段不会进入输出或代理配置。`openai` Chat Completions 和 `openai-responses` 两种模式均可使用。
 
 ## 启动
 
@@ -178,4 +175,4 @@ uv run python -m unittest discover -s tests
 
 当前测试覆盖非流式与流式参数聚合、首次空调用后的合法重试、连续空调用的重试上限，以及原项目已有的协议和缓存行为。真实第三方 API 测试不会在 CI 中执行。
 
-详细设计和后续 Responses API 适配边界见 [DESIGN.md](DESIGN.md)。
+详细设计和 Responses API 适配边界见 [DESIGN.md](DESIGN.md)。

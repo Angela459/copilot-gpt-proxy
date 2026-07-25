@@ -1,0 +1,181 @@
+from __future__ import annotations
+
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
+import threading
+import unittest
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
+
+from copilot_gpt_proxy.config import ProxyConfig
+from copilot_gpt_proxy.reasoning_store import ReasoningStore
+from copilot_gpt_proxy.responses import inspect_responses_body
+from copilot_gpt_proxy.server import DeepSeekProxyHandler, DeepSeekProxyServer
+
+
+def _event(event: dict) -> bytes:
+    return b"data: " + json.dumps(event, separators=(",", ":")).encode() + b"\n\n"
+
+
+def _responses_stream(arguments: str, completed: bool = True) -> bytes:
+    item = {
+        "id": "fc_patch",
+        "call_id": "call_patch",
+        "type": "function_call",
+        "name": "apply_patch",
+        "arguments": arguments,
+    }
+    body = _event(
+        {
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "item": {**item, "arguments": ""},
+        }
+    )
+    body += _event(
+        {
+            "type": "response.function_call_arguments.done",
+            "item_id": "fc_patch",
+            "output_index": 0,
+            "arguments": arguments,
+        }
+    )
+    body += _event(
+        {"type": "response.output_item.done", "output_index": 0, "item": item}
+    )
+    if completed:
+        body += _event(
+            {
+                "type": "response.completed",
+                "response": {"id": "resp_1", "status": "completed", "output": [item]},
+            }
+        )
+    return body
+
+
+class ResponsesAccumulatorTests(unittest.TestCase):
+    def test_detects_empty_apply_patch_and_completion(self) -> None:
+        invalid, completed = inspect_responses_body(_responses_stream("{}"), True)
+        self.assertEqual(invalid, ["call_patch"])
+        self.assertTrue(completed)
+
+    def test_detects_stream_without_completed_event(self) -> None:
+        invalid, completed = inspect_responses_body(
+            _responses_stream('{"patch":"*** Begin Patch"}', completed=False),
+            True,
+        )
+        self.assertEqual(invalid, [])
+        self.assertFalse(completed)
+
+
+class _ResponsesUpstream(BaseHTTPRequestHandler):
+    requests: list[dict] = []
+    incomplete = False
+
+    def log_message(self, fmt: str, *args: object) -> None:
+        return
+
+    def do_POST(self) -> None:
+        length = int(self.headers.get("Content-Length") or 0)
+        payload = json.loads(self.rfile.read(length))
+        self.__class__.requests.append(payload)
+        arguments = (
+            "{}"
+            if len(self.__class__.requests) == 1
+            else '{"patch":"*** Begin Patch\\n*** End Patch"}'
+        )
+        body = _responses_stream(arguments, completed=not self.__class__.incomplete)
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.end_headers()
+        self.wfile.write(body)
+        self.wfile.flush()
+
+
+class _Fixture:
+    def __init__(self, server: ThreadingHTTPServer) -> None:
+        self.server = server
+        self.thread = threading.Thread(target=server.serve_forever, daemon=True)
+        self.thread.start()
+
+    @property
+    def url(self) -> str:
+        host, port = self.server.server_address
+        return f"http://{host}:{port}"
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=5)
+
+
+class ResponsesIntegrationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        _ResponsesUpstream.requests = []
+        _ResponsesUpstream.incomplete = False
+        self.upstream = _Fixture(
+            ThreadingHTTPServer(("127.0.0.1", 0), _ResponsesUpstream)
+        )
+        self.store = ReasoningStore(":memory:")
+        proxy = DeepSeekProxyServer(("127.0.0.1", 0), DeepSeekProxyHandler)
+        proxy.config = ProxyConfig(
+            upstream_base_url=self.upstream.url,
+            upstream_model="gpt-5.4",
+            ngrok=False,
+            display_reasoning=False,
+        )
+        proxy.reasoning_store = self.store
+        proxy.trace_writer = None
+        self.proxy = _Fixture(proxy)
+
+    def tearDown(self) -> None:
+        self.proxy.close()
+        self.upstream.close()
+        self.store.close()
+
+    def _post(self) -> tuple[int, bytes, str]:
+        request = Request(
+            f"{self.proxy.url}/v1/responses",
+            data=json.dumps(
+                {"model": "gpt-5.4", "stream": True, "input": "edit it"}
+            ).encode(),
+            method="POST",
+            headers={
+                "Authorization": "Bearer sk-test",
+                "Content-Type": "application/json",
+            },
+        )
+        try:
+            with urlopen(request, timeout=5) as response:
+                return (
+                    response.status,
+                    response.read(),
+                    response.headers.get_content_type(),
+                )
+        except HTTPError as exc:
+            return exc.code, exc.read(), exc.headers.get_content_type()
+
+    def test_empty_responses_call_is_retried_before_forwarding(self) -> None:
+        status, body, content_type = self._post()
+        self.assertEqual(status, 200)
+        self.assertEqual(content_type, "text/event-stream")
+        self.assertEqual(len(_ResponsesUpstream.requests), 2)
+        self.assertNotIn(b'"arguments":"{}"', body)
+        self.assertIn(b"Begin Patch", body)
+        self.assertIn(b"response.completed", body)
+        self.assertIn(
+            "Compatibility retry", _ResponsesUpstream.requests[1]["instructions"]
+        )
+
+    def test_incomplete_stream_is_bounded_after_one_retry(self) -> None:
+        _ResponsesUpstream.incomplete = True
+        status, body, content_type = self._post()
+        payload = json.loads(body)
+        self.assertEqual(status, 502)
+        self.assertEqual(content_type, "application/json")
+        self.assertEqual(len(_ResponsesUpstream.requests), 2)
+        self.assertEqual(payload["error"]["code"], "incomplete_response")
+
+
+if __name__ == "__main__":
+    unittest.main()

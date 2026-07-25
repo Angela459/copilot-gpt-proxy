@@ -112,11 +112,11 @@ The integration test should run a fake upstream server and assert the exact numb
 - The proxy cannot repair a patch whose content was never produced.
 - It cannot fix a Copilot client bug that rejects a valid provider response unless the response format is observable at this boundary.
 - Retrying an edit request can duplicate side effects if a provider has already executed a tool; retries must happen before a tool call is exposed to the client.
-- Provider-specific endpoints may use Responses API semantics rather than Chat Completions; that adapter should be isolated instead of spreading conditionals through the server.
+- Responses API semantics are isolated in a dedicated accumulator and request path instead of spreading event-format conditionals through the Chat Completions transformer.
 
 ## Implementation status
 
-The canonical Chat Completions guard, complete SSE argument assembly, one-retry policy, bounded failure response, configuration, and fake-upstream integration tests are implemented. Provider-specific Responses API adapters and validation against a captured third-party request remain future work.
+The canonical Chat Completions guard, native Responses API passthrough, complete SSE argument assembly, one-retry policy, bounded failure response, configuration, and fake-upstream integration tests are implemented. Validation against a captured third-party request remains future work.
 
 ## Recommended implementation order
 
