@@ -22,9 +22,10 @@ The Copilot/GPT compatibility guard is implemented for Chat Completions and Resp
 
 - assembles streamed tool-call arguments before exposing them to Copilot;
 - recognizes both Responses `function_call` and free-form `custom_tool_call` items;
+- represents Copilot's free-form `apply_patch` as a required-input function on the first upstream request, avoiding a known empty custom-tool round trip;
 - blocks completed `apply_patch` calls whose arguments or `input` contain no patch content;
 - removes known empty calls and their error outputs from the retry copy of Responses history;
-- retries once with `apply_patch` represented as a standard function whose `input` is required and non-empty, improving compatibility with upstreams that accept custom tools but fail to generate their free-form input; and
+- retries once if the function response is still malformed; and
 - returns a bounded `empty_apply_patch` error if the retry is still empty.
 
 The proxy never invents patch content. Valid calls and non-`apply_patch` tools pass through normally. The inherited DeepSeek reasoning repair remains available for users of that provider. See [DESIGN.md](DESIGN.md) for the protocol boundary and trade-offs.

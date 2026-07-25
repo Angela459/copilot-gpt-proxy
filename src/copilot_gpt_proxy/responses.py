@@ -147,24 +147,29 @@ def inspect_responses_body(body: bytes, streaming: bool) -> tuple[list[str], boo
 
 
 def repair_responses_request(payload: dict[str, Any]) -> dict[str, Any]:
-    repaired = deepcopy(payload)
+    repaired = normalize_responses_request(payload)
     request_input = repaired.get("input")
     if isinstance(request_input, list):
         repaired["input"] = _remove_empty_apply_patch_history(request_input)
-    tools = repaired.get("tools")
+    instructions = repaired.get("instructions")
+    prefix = f"{instructions}\n\n" if isinstance(instructions, str) else ""
+    repaired["instructions"] = prefix + REPAIR_INSTRUCTION
+    return repaired
+
+
+def normalize_responses_request(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = deepcopy(payload)
+    tools = normalized.get("tools")
     if isinstance(tools, list):
-        repaired["tools"] = [_repair_tool(tool) for tool in tools]
-    tool_choice = repaired.get("tool_choice")
+        normalized["tools"] = [_repair_tool(tool) for tool in tools]
+    tool_choice = normalized.get("tool_choice")
     if (
         isinstance(tool_choice, dict)
         and tool_choice.get("type") == "custom"
         and tool_choice.get("name") == "apply_patch"
     ):
-        repaired["tool_choice"] = {"type": "function", "name": "apply_patch"}
-    instructions = repaired.get("instructions")
-    prefix = f"{instructions}\n\n" if isinstance(instructions, str) else ""
-    repaired["instructions"] = prefix + REPAIR_INSTRUCTION
-    return repaired
+        normalized["tool_choice"] = {"type": "function", "name": "apply_patch"}
+    return normalized
 
 
 def _repair_tool(tool: Any) -> Any:

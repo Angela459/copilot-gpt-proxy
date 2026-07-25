@@ -31,6 +31,7 @@ from .reasoning_store import ReasoningStore, conversation_scope
 from .responses import (
     INCOMPLETE_RESPONSES_STREAM_ERROR,
     inspect_responses_body,
+    normalize_responses_request,
     repair_responses_request,
 )
 from .streaming import CursorReasoningDisplayAdapter, StreamAccumulator
@@ -432,7 +433,11 @@ class DeepSeekProxyHandler(BaseHTTPRequestHandler):
         trace: TraceRequest | None,
         started: float,
     ) -> None:
-        original_payload = dict(payload)
+        original_payload = (
+            normalize_responses_request(payload)
+            if self.config.empty_apply_patch == "retry_once"
+            else dict(payload)
+        )
         original_payload["model"] = str(
             original_payload.get("model") or self.config.upstream_model
         )

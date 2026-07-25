@@ -11,6 +11,7 @@ from copilot_gpt_proxy.config import ProxyConfig
 from copilot_gpt_proxy.reasoning_store import ReasoningStore
 from copilot_gpt_proxy.responses import (
     inspect_responses_body,
+    normalize_responses_request,
     repair_responses_request,
 )
 from copilot_gpt_proxy.server import DeepSeekProxyHandler, DeepSeekProxyServer
@@ -186,7 +187,7 @@ class ResponsesAccumulatorTests(unittest.TestCase):
         self.assertEqual(len(payload["input"]), 7)
         self.assertIn("free-form custom tool", repaired["instructions"])
 
-    def test_retry_downgrades_custom_apply_patch_to_required_function_input(
+    def test_normalization_converts_custom_patch_to_required_function_input(
         self,
     ) -> None:
         custom_tool = {
@@ -202,7 +203,7 @@ class ResponsesAccumulatorTests(unittest.TestCase):
             "tool_choice": {"type": "custom", "name": "apply_patch"},
         }
 
-        repaired = repair_responses_request(payload)
+        repaired = normalize_responses_request(payload)
 
         patch_tool = repaired["tools"][0]
         self.assertEqual(patch_tool["type"], "function")
@@ -232,7 +233,6 @@ class _ResponsesUpstream(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         payload = json.loads(self.rfile.read(length))
         self.__class__.requests.append(payload)
-        empty = self.__class__.always_empty or len(self.__class__.requests) == 1
         patch_tool = next(
             (
                 tool
@@ -240,6 +240,14 @@ class _ResponsesUpstream(BaseHTTPRequestHandler):
                 if isinstance(tool, dict) and tool.get("name") == "apply_patch"
             ),
             None,
+        )
+        function_fallback = (
+            self.__class__.custom
+            and isinstance(patch_tool, dict)
+            and patch_tool.get("type") == "function"
+        )
+        empty = self.__class__.always_empty or (
+            len(self.__class__.requests) == 1 and not function_fallback
         )
         if self.__class__.custom and (
             not isinstance(patch_tool, dict) or patch_tool.get("type") == "custom"
@@ -360,18 +368,15 @@ class ResponsesIntegrationTests(unittest.TestCase):
         self.assertEqual(len(_ResponsesUpstream.requests), 2)
         self.assertEqual(payload["error"]["code"], "incomplete_response")
 
-    def test_empty_custom_call_is_retried_with_valid_custom_input(self) -> None:
+    def test_custom_patch_is_normalized_before_first_upstream_request(self) -> None:
         _ResponsesUpstream.custom = True
         status, body, content_type = self._post()
         self.assertEqual(status, 200)
         self.assertEqual(content_type, "text/event-stream")
-        self.assertEqual(len(_ResponsesUpstream.requests), 2)
+        self.assertEqual(len(_ResponsesUpstream.requests), 1)
         self.assertIn(b"*** Begin Patch", body)
-        self.assertIn(
-            "free-form custom tool", _ResponsesUpstream.requests[1]["instructions"]
-        )
-        self.assertEqual(_ResponsesUpstream.requests[0]["tools"][0]["type"], "custom")
-        self.assertEqual(_ResponsesUpstream.requests[1]["tools"][0]["type"], "function")
+        self.assertEqual(_ResponsesUpstream.requests[0]["tools"][0]["type"], "function")
+        self.assertNotIn("instructions", _ResponsesUpstream.requests[0])
 
     def test_repeated_empty_custom_calls_return_bounded_error(self) -> None:
         _ResponsesUpstream.custom = True
