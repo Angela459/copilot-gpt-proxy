@@ -24,6 +24,7 @@ The Copilot/GPT compatibility guard is implemented for Chat Completions and Resp
 - recognizes both Responses `function_call` and free-form `custom_tool_call` items;
 - represents Copilot's free-form `apply_patch` as a required-input function on the first upstream request, avoiding a known empty custom-tool round trip;
 - restores the successful function response to Copilot's original `custom_tool_call` event shape and unwraps the raw patch input, so the client can execute its registered custom tool;
+- removes repeated prompt and tool definitions from Responses lifecycle events before returning them through the tunnel, while preserving the schema fields, output, and usage;
 - blocks completed `apply_patch` calls whose arguments or `input` contain no patch content;
 - removes known empty calls and their error outputs from the retry copy of Responses history;
 - retries once if the function response is still malformed; and

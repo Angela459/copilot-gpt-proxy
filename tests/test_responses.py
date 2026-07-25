@@ -289,6 +289,29 @@ class ResponsesAccumulatorTests(unittest.TestCase):
         self.assertNotIn("event: response.function_call_arguments.done", restored)
         self.assertIn("event: response.custom_tool_call_input.done", restored)
 
+    def test_restored_stream_trims_repeated_request_metadata(self) -> None:
+        source = _named_event(
+            {
+                "type": "response.created",
+                "response": {
+                    "id": "resp_1",
+                    "instructions": "large prompt" * 100,
+                    "tools": [{"type": "function", "name": "tool"}] * 50,
+                    "output": [],
+                },
+            }
+        )
+
+        restored = restore_custom_apply_patch_response(source, True)
+        data_line = next(
+            line for line in restored.splitlines() if line.startswith(b"data:")
+        )
+        event = json.loads(data_line[len(b"data:") :])
+
+        self.assertIsNone(event["response"]["instructions"])
+        self.assertEqual(event["response"]["tools"], [])
+        self.assertEqual(event["response"]["id"], "resp_1")
+
     def test_detects_custom_patch_tool_without_matching_other_tools(self) -> None:
         self.assertTrue(
             has_custom_apply_patch_tool(

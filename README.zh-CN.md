@@ -26,6 +26,7 @@ apply_patch requires a non-empty string input (the patch content)
 - 同时识别 Responses 的 `function_call` 和 FREEFORM `custom_tool_call`；
 - 第一次上游请求就把 Copilot 的 FREEFORM `apply_patch` 表示为 `input` 必填且非空的标准 function，避免已知必定为空的 custom 工具往返；
 - 上游成功后再还原为 Copilot 原始的 `custom_tool_call` 事件并解包出补丁原文，使客户端能够执行其已注册的 custom 工具；
+- 返回隧道前清除 Responses 生命周期事件中重复回显的提示词和工具定义，同时保留字段结构、输出与用量，避免数百 KB 的冗余响应触发连接提前结束；
 - 拦截参数或 `input` 中没有补丁内容的 `apply_patch`；
 - 从重试副本中移除已知的空调用及其错误回执，避免模型继续模仿错误历史；
 - 如果 function 响应仍然异常，最多重试一次；

@@ -243,6 +243,9 @@ def _restore_stream_event(
     event: dict[str, Any], item_names: dict[str, str]
 ) -> dict[str, Any] | None:
     event_type = event.get("type")
+    response = event.get("response")
+    if isinstance(response, dict):
+        _trim_repeated_request_metadata(response)
     item = event.get("item")
     if isinstance(item, dict) and item.get("type") == "function_call":
         item_id = str(item.get("id") or event.get("item_id") or "")
@@ -261,10 +264,16 @@ def _restore_stream_event(
             event["input"] = _patch_input(event.pop("arguments", ""))
 
     if event_type == "response.completed":
-        response = event.get("response")
         if isinstance(response, dict):
             _restore_output(response.get("output"))
     return event
+
+
+def _trim_repeated_request_metadata(response: dict[str, Any]) -> None:
+    if "instructions" in response:
+        response["instructions"] = None
+    if "tools" in response:
+        response["tools"] = []
 
 
 def _restore_output(output: Any) -> None:
