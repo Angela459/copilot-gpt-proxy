@@ -46,6 +46,8 @@ POST /v1/responses
 
 Responses API 的流会在代理内部缓冲到 `response.completed`，这样才能在交给 Copilot 之前检查工具调用。如果上游始终不发送完成事件，代理会返回有界错误，不会伪造 `response.completed`。
 
+缓冲后的 SSE 响应使用连接结束定界，不发送固定 `Content-Length`，避免 ngrok 等隧道层把正常结束误判为响应体截断。
+
 如果上游 Responses API 仍然提前断流，客户端可能看到：
 
 ```text

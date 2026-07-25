@@ -590,9 +590,10 @@ class DeepSeekProxyHandler(BaseHTTPRequestHandler):
         )
         headers = {
             "Content-Type": content_type,
-            "Content-Length": str(len(body)),
             "Connection": "close",
         }
+        if not streaming:
+            headers["Content-Length"] = str(len(body))
         if trace is not None:
             trace.record_upstream_response(
                 status=status,

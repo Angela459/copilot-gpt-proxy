@@ -414,7 +414,7 @@ class ResponsesIntegrationTests(unittest.TestCase):
         self.upstream.close()
         self.store.close()
 
-    def _post(self) -> tuple[int, bytes, str]:
+    def _post(self) -> tuple[int, bytes, str, str | None]:
         request = Request(
             f"{self.proxy.url}/v1/responses",
             data=json.dumps(
@@ -448,14 +448,21 @@ class ResponsesIntegrationTests(unittest.TestCase):
                     response.status,
                     response.read(),
                     response.headers.get_content_type(),
+                    response.headers.get("Content-Length"),
                 )
         except HTTPError as exc:
-            return exc.code, exc.read(), exc.headers.get_content_type()
+            return (
+                exc.code,
+                exc.read(),
+                exc.headers.get_content_type(),
+                exc.headers.get("Content-Length"),
+            )
 
     def test_empty_responses_call_is_retried_before_forwarding(self) -> None:
-        status, body, content_type = self._post()
+        status, body, content_type, content_length = self._post()
         self.assertEqual(status, 200)
         self.assertEqual(content_type, "text/event-stream")
+        self.assertIsNone(content_length)
         self.assertEqual(len(_ResponsesUpstream.requests), 2)
         self.assertNotIn(b'"arguments":"{}"', body)
         self.assertIn(b"Begin Patch", body)
@@ -466,18 +473,20 @@ class ResponsesIntegrationTests(unittest.TestCase):
 
     def test_incomplete_stream_is_bounded_after_one_retry(self) -> None:
         _ResponsesUpstream.incomplete = True
-        status, body, content_type = self._post()
+        status, body, content_type, content_length = self._post()
         payload = json.loads(body)
         self.assertEqual(status, 502)
         self.assertEqual(content_type, "application/json")
+        self.assertIsNotNone(content_length)
         self.assertEqual(len(_ResponsesUpstream.requests), 2)
         self.assertEqual(payload["error"]["code"], "incomplete_response")
 
     def test_custom_patch_is_normalized_before_first_upstream_request(self) -> None:
         _ResponsesUpstream.custom = True
-        status, body, content_type = self._post()
+        status, body, content_type, content_length = self._post()
         self.assertEqual(status, 200)
         self.assertEqual(content_type, "text/event-stream")
+        self.assertIsNone(content_length)
         self.assertEqual(len(_ResponsesUpstream.requests), 1)
         self.assertIn(b"*** Begin Patch", body)
         self.assertIn(b'"type":"custom_tool_call"', body)
@@ -489,10 +498,11 @@ class ResponsesIntegrationTests(unittest.TestCase):
     def test_repeated_empty_custom_calls_return_bounded_error(self) -> None:
         _ResponsesUpstream.custom = True
         _ResponsesUpstream.always_empty = True
-        status, body, content_type = self._post()
+        status, body, content_type, content_length = self._post()
         payload = json.loads(body)
         self.assertEqual(status, 502)
         self.assertEqual(content_type, "application/json")
+        self.assertIsNotNone(content_length)
         self.assertEqual(len(_ResponsesUpstream.requests), 2)
         self.assertEqual(payload["error"]["code"], "empty_apply_patch")
 

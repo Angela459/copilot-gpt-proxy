@@ -36,6 +36,8 @@ The proxy never invents patch content. Valid calls and non-`apply_patch` tools p
 > streams are buffered until `response.completed` so malformed tool calls can be
 > retried before Copilot sees them. An upstream stream that never completes is
 > returned as a bounded error; the proxy never fabricates a completion event.
+> Buffered SSE responses are connection-delimited rather than sent with a fixed
+> `Content-Length`, avoiding tunnel-layer false truncation errors.
 
 The current executable is:
 
