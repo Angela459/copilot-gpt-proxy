@@ -21,8 +21,10 @@ Some clients retry the same malformed call indefinitely. This is a model/tool-ca
 The Copilot/GPT compatibility guard is implemented for Chat Completions and Responses API outputs. It:
 
 - assembles streamed tool-call arguments before exposing them to Copilot;
-- blocks completed `apply_patch` calls whose arguments contain no patch content;
-- retries the upstream request once with a focused repair instruction; and
+- recognizes both Responses `function_call` and free-form `custom_tool_call` items;
+- blocks completed `apply_patch` calls whose arguments or `input` contain no patch content;
+- removes known empty calls and their error outputs from the retry copy of Responses history;
+- retries the upstream request once with an explicit non-empty free-form patch instruction; and
 - returns a bounded `empty_apply_patch` error if the retry is still empty.
 
 The proxy never invents patch content. Valid calls and non-`apply_patch` tools pass through normally. The inherited DeepSeek reasoning repair remains available for users of that provider. See [DESIGN.md](DESIGN.md) for the protocol boundary and trade-offs.

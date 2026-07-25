@@ -33,6 +33,7 @@ class ToolGuardUnitTests(unittest.TestCase):
             "{}",
             {},
             '{"patch":""}',
+            '{"input":""}',
             '{"patch":"", "attempt":1}',
             "[]",
         ):
@@ -46,6 +47,7 @@ class ToolGuardUnitTests(unittest.TestCase):
         for arguments in (
             "*** Begin Patch\n*** End Patch",
             '{"patch":"*** Begin Patch\\n*** End Patch"}',
+            '{"input":"*** Begin Patch\\n*** End Patch"}',
             {"patch": "*** Begin Patch\n*** End Patch"},
         ):
             with self.subTest(arguments=arguments):

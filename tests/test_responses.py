@@ -9,7 +9,10 @@ from urllib.request import Request, urlopen
 
 from copilot_gpt_proxy.config import ProxyConfig
 from copilot_gpt_proxy.reasoning_store import ReasoningStore
-from copilot_gpt_proxy.responses import inspect_responses_body
+from copilot_gpt_proxy.responses import (
+    inspect_responses_body,
+    repair_responses_request,
+)
 from copilot_gpt_proxy.server import DeepSeekProxyHandler, DeepSeekProxyServer
 
 
@@ -53,6 +56,52 @@ def _responses_stream(arguments: str, completed: bool = True) -> bytes:
     return body
 
 
+def _custom_responses_stream(tool_input: str, completed: bool = True) -> bytes:
+    item = {
+        "id": "ctc_patch",
+        "call_id": "call_custom_patch",
+        "type": "custom_tool_call",
+        "name": "apply_patch",
+        "input": tool_input,
+    }
+    body = _event(
+        {
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "item": {**item, "input": ""},
+        }
+    )
+    midpoint = len(tool_input) // 2
+    for delta in (tool_input[:midpoint], tool_input[midpoint:]):
+        body += _event(
+            {
+                "type": "response.custom_tool_call_input.delta",
+                "item_id": "ctc_patch",
+                "output_index": 0,
+                "delta": delta,
+            }
+        )
+    body += _event(
+        {
+            "type": "response.custom_tool_call_input.done",
+            "item_id": "ctc_patch",
+            "output_index": 0,
+            "input": tool_input,
+        }
+    )
+    body += _event(
+        {"type": "response.output_item.done", "output_index": 0, "item": item}
+    )
+    if completed:
+        body += _event(
+            {
+                "type": "response.completed",
+                "response": {"id": "resp_1", "status": "completed", "output": [item]},
+            }
+        )
+    return body
+
+
 class ResponsesAccumulatorTests(unittest.TestCase):
     def test_detects_empty_apply_patch_and_completion(self) -> None:
         invalid, completed = inspect_responses_body(_responses_stream("{}"), True)
@@ -67,10 +116,82 @@ class ResponsesAccumulatorTests(unittest.TestCase):
         self.assertEqual(invalid, [])
         self.assertFalse(completed)
 
+    def test_detects_empty_function_call_input_field(self) -> None:
+        invalid, completed = inspect_responses_body(
+            _responses_stream('{"input":""}'), True
+        )
+        self.assertEqual(invalid, ["call_patch"])
+        self.assertTrue(completed)
+
+    def test_detects_empty_custom_tool_call(self) -> None:
+        invalid, completed = inspect_responses_body(_custom_responses_stream(""), True)
+        self.assertEqual(invalid, ["call_custom_patch"])
+        self.assertTrue(completed)
+
+    def test_accepts_valid_custom_tool_call(self) -> None:
+        patch = "*** Begin Patch\n*** End Patch"
+        invalid, completed = inspect_responses_body(
+            _custom_responses_stream(patch), True
+        )
+        self.assertEqual(invalid, [])
+        self.assertTrue(completed)
+
+    def test_retry_removes_empty_call_history_and_matching_outputs(self) -> None:
+        valid_call = {
+            "type": "custom_tool_call",
+            "call_id": "call_valid",
+            "name": "apply_patch",
+            "input": "*** Begin Patch\n*** End Patch",
+        }
+        payload = {
+            "input": [
+                {"type": "message", "role": "user", "content": "edit it"},
+                {
+                    "type": "function_call",
+                    "call_id": "call_empty_function",
+                    "name": "apply_patch",
+                    "arguments": '{"input":""}',
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_empty_function",
+                    "output": "apply_patch requires a non-empty string input",
+                },
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "call_empty_custom",
+                    "name": "apply_patch",
+                    "input": "",
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_empty_custom",
+                    "output": "apply_patch requires a non-empty string input",
+                },
+                valid_call,
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_valid",
+                    "output": "Done!",
+                },
+            ]
+        }
+
+        repaired = repair_responses_request(payload)
+
+        self.assertEqual(
+            repaired["input"],
+            [payload["input"][0], valid_call, payload["input"][-1]],
+        )
+        self.assertEqual(len(payload["input"]), 7)
+        self.assertIn("free-form custom tool", repaired["instructions"])
+
 
 class _ResponsesUpstream(BaseHTTPRequestHandler):
     requests: list[dict] = []
     incomplete = False
+    custom = False
+    always_empty = False
 
     def log_message(self, fmt: str, *args: object) -> None:
         return
@@ -79,12 +200,15 @@ class _ResponsesUpstream(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         payload = json.loads(self.rfile.read(length))
         self.__class__.requests.append(payload)
-        arguments = (
-            "{}"
-            if len(self.__class__.requests) == 1
-            else '{"patch":"*** Begin Patch\\n*** End Patch"}'
-        )
-        body = _responses_stream(arguments, completed=not self.__class__.incomplete)
+        empty = self.__class__.always_empty or len(self.__class__.requests) == 1
+        if self.__class__.custom:
+            tool_input = "" if empty else "*** Begin Patch\n*** End Patch"
+            body = _custom_responses_stream(
+                tool_input, completed=not self.__class__.incomplete
+            )
+        else:
+            arguments = "{}" if empty else '{"patch":"*** Begin Patch\\n*** End Patch"}'
+            body = _responses_stream(arguments, completed=not self.__class__.incomplete)
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.end_headers()
@@ -113,6 +237,8 @@ class ResponsesIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
         _ResponsesUpstream.requests = []
         _ResponsesUpstream.incomplete = False
+        _ResponsesUpstream.custom = False
+        _ResponsesUpstream.always_empty = False
         self.upstream = _Fixture(
             ThreadingHTTPServer(("127.0.0.1", 0), _ResponsesUpstream)
         )
@@ -175,6 +301,27 @@ class ResponsesIntegrationTests(unittest.TestCase):
         self.assertEqual(content_type, "application/json")
         self.assertEqual(len(_ResponsesUpstream.requests), 2)
         self.assertEqual(payload["error"]["code"], "incomplete_response")
+
+    def test_empty_custom_call_is_retried_with_valid_custom_input(self) -> None:
+        _ResponsesUpstream.custom = True
+        status, body, content_type = self._post()
+        self.assertEqual(status, 200)
+        self.assertEqual(content_type, "text/event-stream")
+        self.assertEqual(len(_ResponsesUpstream.requests), 2)
+        self.assertIn(b"*** Begin Patch", body)
+        self.assertIn(
+            "free-form custom tool", _ResponsesUpstream.requests[1]["instructions"]
+        )
+
+    def test_repeated_empty_custom_calls_return_bounded_error(self) -> None:
+        _ResponsesUpstream.custom = True
+        _ResponsesUpstream.always_empty = True
+        status, body, content_type = self._post()
+        payload = json.loads(body)
+        self.assertEqual(status, 502)
+        self.assertEqual(content_type, "application/json")
+        self.assertEqual(len(_ResponsesUpstream.requests), 2)
+        self.assertEqual(payload["error"]["code"], "empty_apply_patch")
 
 
 if __name__ == "__main__":

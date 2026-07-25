@@ -20,11 +20,13 @@ apply_patch {}
 apply_patch requires a non-empty string input (the patch content)
 ```
 
-部分客户端还会反复重试同一个错误调用。当前代理针对 Chat Completions API 实现了以下保护：
+部分客户端还会反复重试同一个错误调用。当前代理针对 Chat Completions 和 Responses API 实现了以下保护：
 
 - 完整聚合流式工具调用参数后，再向 Copilot 输出；
-- 拦截没有补丁内容的 `apply_patch`；
-- 给上游增加明确的修复提示，最多重试一次；
+- 同时识别 Responses 的 `function_call` 和 FREEFORM `custom_tool_call`；
+- 拦截参数或 `input` 中没有补丁内容的 `apply_patch`；
+- 从重试副本中移除已知的空调用及其错误回执，避免模型继续模仿错误历史；
+- 明确要求上游生成非空的完整 FREEFORM 补丁，最多重试一次；
 - 第二次仍为空时返回 `empty_apply_patch` 错误并立即终止；
 - 不伪造模型从未生成的补丁内容。
 

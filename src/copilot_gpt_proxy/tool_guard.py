@@ -12,10 +12,13 @@ EMPTY_APPLY_PATCH_ERROR = (
 
 REPAIR_INSTRUCTION = (
     "Compatibility retry: your previous response attempted to call apply_patch "
-    "without patch content. Repeat the requested task now. If you call "
-    "apply_patch, provide the complete non-empty patch string required by the "
-    "tool schema. Do not pass an empty object or empty string. If no edit is "
-    "needed, explain that instead of calling the tool."
+    "without patch content. Repeat the requested task now. apply_patch must "
+    "receive a complete non-empty patch string, starting with '*** Begin Patch' "
+    "and ending with '*** End Patch'. For a free-form custom tool, send that "
+    "patch directly as its input. For a function tool, set the patch-content "
+    "field required by its schema, such as input or patch. Do not pass an empty "
+    "object or empty string. If no edit is needed, explain that instead of "
+    "calling the tool."
 )
 
 

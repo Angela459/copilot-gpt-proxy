@@ -31,7 +31,10 @@ class ResponsesAccumulator:
             return
 
         item = event.get("item")
-        if isinstance(item, dict) and item.get("type") == "function_call":
+        if isinstance(item, dict) and item.get("type") in {
+            "function_call",
+            "custom_tool_call",
+        }:
             self._ingest_call(item, event)
 
         if event_type == "response.function_call_arguments.delta":
@@ -44,6 +47,16 @@ class ResponsesAccumulator:
             arguments = event.get("arguments")
             if isinstance(arguments, str):
                 call["function"]["arguments"] = arguments
+        elif event_type == "response.custom_tool_call_input.delta":
+            call = self._call_for_event(event)
+            delta = event.get("delta")
+            if isinstance(delta, str):
+                call["function"]["arguments"] += delta
+        elif event_type == "response.custom_tool_call_input.done":
+            call = self._call_for_event(event)
+            tool_input = event.get("input")
+            if isinstance(tool_input, str):
+                call["function"]["arguments"] = tool_input
 
     def messages(self) -> list[dict[str, Any]]:
         return [{"role": "assistant", "tool_calls": list(self.calls.values())}]
@@ -52,7 +65,10 @@ class ResponsesAccumulator:
         if not isinstance(output, list):
             return
         for index, item in enumerate(output):
-            if isinstance(item, dict) and item.get("type") == "function_call":
+            if isinstance(item, dict) and item.get("type") in {
+                "function_call",
+                "custom_tool_call",
+            }:
                 self._ingest_call(item, {"output_index": index})
 
     def _ingest_call(self, item: dict[str, Any], event: dict[str, Any]) -> None:
@@ -69,7 +85,9 @@ class ResponsesAccumulator:
         if isinstance(name, str) and name:
             call["function"]["name"] = name
         arguments = item.get("arguments")
-        if isinstance(arguments, str) and arguments:
+        if not isinstance(arguments, str):
+            arguments = item.get("input")
+        if isinstance(arguments, str):
             call["function"]["arguments"] = arguments
 
     def _call_for_event(self, event: dict[str, Any]) -> dict[str, Any]:
@@ -125,7 +143,56 @@ def inspect_responses_body(body: bytes, streaming: bool) -> tuple[list[str], boo
 
 def repair_responses_request(payload: dict[str, Any]) -> dict[str, Any]:
     repaired = deepcopy(payload)
+    request_input = repaired.get("input")
+    if isinstance(request_input, list):
+        repaired["input"] = _remove_empty_apply_patch_history(request_input)
     instructions = repaired.get("instructions")
     prefix = f"{instructions}\n\n" if isinstance(instructions, str) else ""
     repaired["instructions"] = prefix + REPAIR_INSTRUCTION
     return repaired
+
+
+def _remove_empty_apply_patch_history(items: list[Any]) -> list[Any]:
+    empty_call_ids = {
+        str(item.get("call_id") or item.get("id"))
+        for item in items
+        if isinstance(item, dict) and _is_empty_apply_patch_item(item)
+    }
+    if not empty_call_ids:
+        return items
+
+    return [
+        item
+        for item in items
+        if not (
+            isinstance(item, dict)
+            and (
+                _is_empty_apply_patch_item(item)
+                or (
+                    item.get("type")
+                    in {
+                        "function_call_output",
+                        "custom_tool_call_output",
+                    }
+                    and str(item.get("call_id") or "") in empty_call_ids
+                )
+            )
+        )
+    ]
+
+
+def _is_empty_apply_patch_item(item: dict[str, Any]) -> bool:
+    item_type = item.get("type")
+    if item_type not in {"function_call", "custom_tool_call"}:
+        return False
+    if str(item.get("name") or "").strip() != "apply_patch":
+        return False
+    arguments = item.get("arguments")
+    if item_type == "custom_tool_call":
+        arguments = item.get("input")
+    call = {
+        "id": item.get("call_id") or item.get("id"),
+        "type": "function",
+        "function": {"name": "apply_patch", "arguments": arguments},
+    }
+    return bool(empty_apply_patch_calls([{"tool_calls": [call]}]))
