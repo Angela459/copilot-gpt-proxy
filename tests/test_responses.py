@@ -10,9 +10,11 @@ from urllib.request import Request, urlopen
 from copilot_gpt_proxy.config import ProxyConfig
 from copilot_gpt_proxy.reasoning_store import ReasoningStore
 from copilot_gpt_proxy.responses import (
+    has_custom_apply_patch_tool,
     inspect_responses_body,
     normalize_responses_request,
     repair_responses_request,
+    restore_custom_apply_patch_response,
 )
 from copilot_gpt_proxy.server import DeepSeekProxyHandler, DeepSeekProxyServer
 
@@ -219,6 +221,33 @@ class ResponsesAccumulatorTests(unittest.TestCase):
         )
         self.assertEqual(payload["tools"][0], custom_tool)
 
+    def test_restores_function_patch_stream_to_custom_tool_events(self) -> None:
+        patch = "*** Begin Patch\n*** End Patch"
+        restored = restore_custom_apply_patch_response(
+            _responses_stream(json.dumps({"input": patch})), True
+        )
+        text = restored.decode("utf-8")
+
+        self.assertIn('"type":"custom_tool_call"', text)
+        self.assertIn('"type":"response.custom_tool_call_input.done"', text)
+        self.assertIn('"input":"*** Begin Patch\\n*** End Patch"', text)
+        self.assertNotIn("response.function_call_arguments", text)
+        invalid, completed = inspect_responses_body(restored, True)
+        self.assertEqual(invalid, [])
+        self.assertTrue(completed)
+
+    def test_detects_custom_patch_tool_without_matching_other_tools(self) -> None:
+        self.assertTrue(
+            has_custom_apply_patch_tool(
+                {"tools": [{"type": "custom", "name": "apply_patch"}]}
+            )
+        )
+        self.assertFalse(
+            has_custom_apply_patch_tool(
+                {"tools": [{"type": "function", "name": "apply_patch"}]}
+            )
+        )
+
 
 class _ResponsesUpstream(BaseHTTPRequestHandler):
     requests: list[dict] = []
@@ -375,6 +404,9 @@ class ResponsesIntegrationTests(unittest.TestCase):
         self.assertEqual(content_type, "text/event-stream")
         self.assertEqual(len(_ResponsesUpstream.requests), 1)
         self.assertIn(b"*** Begin Patch", body)
+        self.assertIn(b'"type":"custom_tool_call"', body)
+        self.assertIn(b"response.custom_tool_call_input.done", body)
+        self.assertNotIn(b"response.function_call_arguments", body)
         self.assertEqual(_ResponsesUpstream.requests[0]["tools"][0]["type"], "function")
         self.assertNotIn("instructions", _ResponsesUpstream.requests[0])
 

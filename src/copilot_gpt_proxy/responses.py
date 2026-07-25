@@ -146,6 +146,62 @@ def inspect_responses_body(body: bytes, streaming: bool) -> tuple[list[str], boo
     return empty_apply_patch_calls(accumulator.messages()), True
 
 
+def has_custom_apply_patch_tool(payload: dict[str, Any]) -> bool:
+    tools = payload.get("tools")
+    if not isinstance(tools, list):
+        return False
+    return any(
+        isinstance(tool, dict)
+        and tool.get("type") == "custom"
+        and tool.get("name") == "apply_patch"
+        for tool in tools
+    )
+
+
+def restore_custom_apply_patch_response(body: bytes, streaming: bool) -> bytes:
+    if not streaming:
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return body
+        if not isinstance(payload, dict):
+            return body
+        _restore_output(payload.get("output"))
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode(
+            "utf-8"
+        )
+
+    item_names: dict[str, str] = {}
+    rewritten: list[bytes] = []
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith(b"data:"):
+            rewritten.append(line)
+            continue
+        data = stripped[len(b"data:") :].strip()
+        if not data or data == b"[DONE]":
+            rewritten.append(line)
+            continue
+        try:
+            event = json.loads(data.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            rewritten.append(line)
+            continue
+        if not isinstance(event, dict):
+            rewritten.append(line)
+            continue
+        restored = _restore_stream_event(event, item_names)
+        if restored is None:
+            continue
+        rewritten.append(
+            b"data: "
+            + json.dumps(restored, ensure_ascii=False, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        )
+    return b"\n".join(rewritten) + (b"\n" if body.endswith((b"\n", b"\r")) else b"")
+
+
 def repair_responses_request(payload: dict[str, Any]) -> dict[str, Any]:
     repaired = normalize_responses_request(payload)
     request_input = repaired.get("input")
@@ -170,6 +226,74 @@ def normalize_responses_request(payload: dict[str, Any]) -> dict[str, Any]:
     ):
         normalized["tool_choice"] = {"type": "function", "name": "apply_patch"}
     return normalized
+
+
+def _restore_stream_event(
+    event: dict[str, Any], item_names: dict[str, str]
+) -> dict[str, Any] | None:
+    event_type = event.get("type")
+    item = event.get("item")
+    if isinstance(item, dict) and item.get("type") == "function_call":
+        item_id = str(item.get("id") or event.get("item_id") or "")
+        name = str(item.get("name") or "")
+        if item_id:
+            item_names[item_id] = name
+        if name == "apply_patch":
+            event["item"] = _restore_call_item(item)
+
+    item_id = str(event.get("item_id") or "")
+    if item_names.get(item_id) == "apply_patch":
+        if event_type == "response.function_call_arguments.delta":
+            return None
+        if event_type == "response.function_call_arguments.done":
+            event["type"] = "response.custom_tool_call_input.done"
+            event["input"] = _patch_input(event.pop("arguments", ""))
+
+    if event_type == "response.completed":
+        response = event.get("response")
+        if isinstance(response, dict):
+            _restore_output(response.get("output"))
+    return event
+
+
+def _restore_output(output: Any) -> None:
+    if not isinstance(output, list):
+        return
+    for index, item in enumerate(output):
+        if (
+            isinstance(item, dict)
+            and item.get("type") == "function_call"
+            and item.get("name") == "apply_patch"
+        ):
+            output[index] = _restore_call_item(item)
+
+
+def _restore_call_item(item: dict[str, Any]) -> dict[str, Any]:
+    restored = dict(item)
+    restored["type"] = "custom_tool_call"
+    restored["input"] = _patch_input(restored.pop("arguments", ""))
+    return restored
+
+
+def _patch_input(arguments: Any) -> str:
+    if not isinstance(arguments, str):
+        return ""
+    stripped = arguments.strip()
+    if not stripped:
+        return ""
+    try:
+        decoded = json.loads(stripped)
+    except json.JSONDecodeError:
+        return arguments
+    if isinstance(decoded, dict):
+        for key in ("input", "patch", "content"):
+            value = decoded.get(key)
+            if isinstance(value, str):
+                return value
+        return ""
+    if isinstance(decoded, str):
+        return decoded
+    return ""
 
 
 def _repair_tool(tool: Any) -> Any:

@@ -30,9 +30,11 @@ from .logging import (
 from .reasoning_store import ReasoningStore, conversation_scope
 from .responses import (
     INCOMPLETE_RESPONSES_STREAM_ERROR,
+    has_custom_apply_patch_tool,
     inspect_responses_body,
     normalize_responses_request,
     repair_responses_request,
+    restore_custom_apply_patch_response,
 )
 from .streaming import CursorReasoningDisplayAdapter, StreamAccumulator
 from .trace import TraceRequest, TraceWriter
@@ -433,9 +435,13 @@ class DeepSeekProxyHandler(BaseHTTPRequestHandler):
         trace: TraceRequest | None,
         started: float,
     ) -> None:
+        restore_custom_patch = (
+            self.config.empty_apply_patch == "retry_once"
+            and has_custom_apply_patch_tool(payload)
+        )
         original_payload = (
             normalize_responses_request(payload)
-            if self.config.empty_apply_patch == "retry_once"
+            if restore_custom_patch
             else dict(payload)
         )
         original_payload["model"] = str(
@@ -488,12 +494,18 @@ class DeepSeekProxyHandler(BaseHTTPRequestHandler):
                 response_body = self._read_responses_body(response, streaming)
             invalid_calls, completed = inspect_responses_body(response_body, streaming)
             if not invalid_calls and (completed or not streaming):
+                cursor_body = (
+                    restore_custom_apply_patch_response(response_body, streaming)
+                    if restore_custom_patch
+                    else response_body
+                )
                 self._send_buffered_responses_response(
                     upstream_status,
                     upstream_headers,
-                    response_body,
+                    cursor_body,
                     streaming,
                     trace,
+                    upstream_body=response_body,
                 )
                 self._finish_trace(
                     trace,
@@ -570,6 +582,7 @@ class DeepSeekProxyHandler(BaseHTTPRequestHandler):
         body: bytes,
         streaming: bool,
         trace: TraceRequest | None,
+        upstream_body: bytes | None = None,
     ) -> None:
         content_type = upstream_headers.get(
             "Content-Type",
@@ -584,7 +597,7 @@ class DeepSeekProxyHandler(BaseHTTPRequestHandler):
             trace.record_upstream_response(
                 status=status,
                 headers=upstream_headers,
-                body=body,
+                body=upstream_body if upstream_body is not None else body,
                 stream=streaming,
             )
             trace.record_cursor_response(status=status, headers=headers, body=body)
