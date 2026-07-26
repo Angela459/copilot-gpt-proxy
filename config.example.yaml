@@ -3,6 +3,8 @@
 
 base_url: "__BASE_URL__"
 model: "__MODEL_ID__"
+copilot_settings_path: "__COPILOT_SETTINGS_PATH__"
+copilot_model_id: "__MODEL_ID__"
 
 thinking: enabled
 reasoning_effort: max

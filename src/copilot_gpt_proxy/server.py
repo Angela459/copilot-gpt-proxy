@@ -21,7 +21,7 @@ from .config import (
     default_config_path,
     default_reasoning_content_path,
 )
-from .copilot_config import load_copilot_settings
+from .copilot_config import load_copilot_settings, update_copilot_proxy_url
 from .logging import (
     LOG,
     TerminalSpinner,
@@ -1783,6 +1783,25 @@ def main(argv: list[str] | None = None) -> int:
     api_base_url = (
         f"{public_url.rstrip('/')}/v1" if public_url is not None else local_base_url
     )
+    if config.copilot_settings_path is not None and config.copilot_model_id:
+        try:
+            changed = update_copilot_proxy_url(
+                config.copilot_settings_path,
+                config.copilot_model_id,
+                api_base_url,
+            )
+        except (OSError, ValueError) as exc:
+            LOG.error("failed to update Copilot settings: %s", exc)
+            if tunnel is not None:
+                tunnel.stop()
+            server.server_close()
+            store.close()
+            return 2
+        LOG.info(
+            "copilot_api_base_url: %s (%s)",
+            api_base_url,
+            "updated" if changed else "already configured",
+        )
 
     LOG.info(
         "default_model: %s (%s, %s)",

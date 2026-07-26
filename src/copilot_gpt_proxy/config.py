@@ -167,6 +167,15 @@ def as_path(value: Any, default_path: Path, relative_base: Path) -> Path:
     return relative_base / candidate_path
 
 
+def as_optional_path(value: Any, relative_base: Path) -> Path | None:
+    if value is MISSING or value is None or value == "":
+        return None
+    candidate_path = Path(str(value)).expanduser()
+    if candidate_path.is_absolute():
+        return candidate_path
+    return relative_base / candidate_path
+
+
 def settings_from_config(
     config_path: str | Path | None,
 ) -> tuple[dict[str, Any], Path]:
@@ -220,6 +229,8 @@ class ProxyConfig:
     ngrok: bool = DEFAULT_NGROK
     ngrok_url: str | None = None
     trace_dir: Path | None = None
+    copilot_settings_path: Path | None = None
+    copilot_model_id: str | None = None
 
     @classmethod
     def from_file(
@@ -313,4 +324,11 @@ class ProxyConfig:
                 DEFAULT_NGROK,
             ),
             ngrok_url=as_optional_str(setting_value(settings, "ngrok_url")),
+            copilot_settings_path=as_optional_path(
+                setting_value(settings, "copilot_settings_path"),
+                config_dir,
+            ),
+            copilot_model_id=as_optional_str(
+                setting_value(settings, "copilot_model_id")
+            ),
         )

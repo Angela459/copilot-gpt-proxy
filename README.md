@@ -30,13 +30,15 @@ config.example.yaml
 config.yaml
 ```
 
-首次运行：
+Windows 用户可以直接双击：
 
-```powershell
-.\start.ps1
+```text
+start.bat
 ```
 
-脚本会让用户选择包含 `settings.json` 的 Copilot 配置目录，只检查用户选择的目录，并列出其中可用模型。选择模型后会生成 `config.yaml` 并启动代理。API Key 默认从 Copilot 请求中读取并转发，不会写入配置文件。
+也可以在 PowerShell 中运行 `./start.ps1`。脚本会显示常见配置位置，例如 `%APPDATA%\Code\User`、`%APPDATA%\Code - Insiders\User` 和 `%APPDATA%\VSCodium\User`，然后让用户选择包含 `settings.json` 的目录。它只检查用户选择的目录，不会扫描磁盘。
+
+选择模型后，脚本生成 `config.yaml`，并在修改 Copilot API Base URL 前显示“继续/取消”确认框。原始配置会备份为 `settings.json.copilot-gpt-proxy.bak`，JSONC 注释及其他设置保持不变。API Key 不会写入代理配置。
 
 重新选择目录或模型：
 
@@ -58,7 +60,7 @@ config.yaml
 http://127.0.0.1:9000/v1
 ```
 
-启动后，将 Copilot App 中用于连接代理的 API Base URL 设置为终端输出的 `api_base_url`。`config.yaml` 中的 `base_url` 是代理访问第三方 API 的上游地址，两者不要混用。
+启动脚本会自动将所选 Copilot 模型的 API Base URL 设置为代理地址，无需再手动修改。`config.yaml` 中的 `base_url` 仍是代理访问第三方 API 的上游地址，两者不会混用。
 
 ngrok 默认关闭。只有 Copilot 无法访问本地地址时才需要显式启用：
 

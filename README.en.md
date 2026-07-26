@@ -30,13 +30,15 @@ The startup script generates the real configuration in the repository root. It i
 config.yaml
 ```
 
-First run:
+Windows users can double-click:
 
-```powershell
-.\start.ps1
+```text
+start.bat
 ```
 
-The script asks the user to select the Copilot configuration directory containing `settings.json`, inspects only that directory, and lists the available models. After selection it generates `config.yaml` and starts the proxy. API keys are read from Copilot requests and are never written to the generated configuration.
+Alternatively, run `./start.ps1` in PowerShell. The script displays common configuration locations such as `%APPDATA%\Code\User`, `%APPDATA%\Code - Insiders\User`, and `%APPDATA%\VSCodium\User`, then asks the user to select the directory containing `settings.json`. It inspects only the selected directory and never scans disks.
+
+After model selection, the script generates `config.yaml` and shows a Continue/Cancel confirmation before changing the Copilot API Base URL. The original file is backed up as `settings.json.copilot-gpt-proxy.bak`; JSONC comments and unrelated settings are preserved. API keys are never written to the proxy configuration.
 
 Select a different directory or model:
 
@@ -58,7 +60,7 @@ Default local URL:
 http://127.0.0.1:9000/v1
 ```
 
-After startup, set the API Base URL used by Copilot App to the `api_base_url` printed in the terminal. The `base_url` in `config.yaml` is the upstream third-party API used by the proxy; do not interchange these two addresses.
+The startup script automatically sets the selected Copilot model's API Base URL to the proxy, so no manual edit is required. The `base_url` in `config.yaml` remains the upstream third-party API used by the proxy; the two addresses are kept separate.
 
 ngrok is disabled by default. Enable it explicitly only when Copilot cannot access the local URL:
 
