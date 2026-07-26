@@ -1,8 +1,24 @@
 # Copy this file to config.yaml, then replace the example values.
 # config.yaml is intentionally ignored by Git.
 
-base_url: "https://your-provider.example/v1"
 model: "gpt-5.4"
+
+providers:
+  primary:
+    base_url: "https://your-provider.example/v1"
+
+  # Add another provider when it needs a different API URL or API key.
+  # backup:
+  #   base_url: "https://another-provider.example/v1"
+  #   api_key_env: "BACKUP_PROVIDER_API_KEY"
+
+models:
+  gpt-5.4:
+    provider: primary
+    model: "gpt-5.4"
+  gpt-5.4-mini:
+    provider: primary
+    model: "gpt-5.4-mini"
 
 thinking: enabled
 reasoning_effort: max

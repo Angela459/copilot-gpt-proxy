@@ -38,10 +38,15 @@ DEFAULT_CONFIG_HEADER = (
 DEFAULT_CONFIG_TEXT = f"""{DEFAULT_CONFIG_HEADER}
 # API keys are read from Copilot's Authorization header and forwarded upstream.
 
-# `model` is the fallback when a request has no model; Cursor's requested
-# DeepSeek model name is otherwise respected.
-base_url: {DEFAULT_UPSTREAM_BASE_URL}
+# `model` is the default alias when a request has no model.
 model: {DEFAULT_UPSTREAM_MODEL}
+providers:
+  deepseek:
+    base_url: {DEFAULT_UPSTREAM_BASE_URL}
+models:
+  {DEFAULT_UPSTREAM_MODEL}:
+    provider: deepseek
+    model: {DEFAULT_UPSTREAM_MODEL}
 thinking: {DEFAULT_THINKING}
 reasoning_effort: {DEFAULT_REASONING_EFFORT}
 display_reasoning: {str(DEFAULT_DISPLAY_REASONING).lower()}
@@ -189,11 +194,104 @@ def normalize_empty_apply_patch(value: Any) -> str:
 
 
 @dataclass(frozen=True)
+class ProviderConfig:
+    name: str
+    base_url: str
+    api_key_env: str | None = None
+
+
+@dataclass(frozen=True)
+class ModelRoute:
+    alias: str
+    provider: str
+    upstream_model: str
+
+
+@dataclass(frozen=True)
+class ResolvedRoute:
+    requested_model: str
+    provider: str
+    upstream_base_url: str
+    upstream_model: str
+    api_key_env: str | None = None
+
+
+class UnknownModelError(ValueError):
+    pass
+
+
+def parse_providers(value: Any) -> dict[str, ProviderConfig]:
+    if value is MISSING or value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ValueError("`providers` must be a YAML mapping")
+
+    providers: dict[str, ProviderConfig] = {}
+    for raw_name, raw_provider in value.items():
+        name = str(raw_name).strip()
+        if not name:
+            raise ValueError("Provider names must not be empty")
+        if not isinstance(raw_provider, Mapping):
+            raise ValueError(f"Provider {name!r} must be a YAML mapping")
+        base_url = str(raw_provider.get("base_url") or "").strip().rstrip("/")
+        if not base_url:
+            raise ValueError(f"Provider {name!r} requires `base_url`")
+        raw_api_key_env = raw_provider.get("api_key_env")
+        api_key_env = (
+            str(raw_api_key_env).strip() if raw_api_key_env is not None else None
+        )
+        if api_key_env == "":
+            api_key_env = None
+        providers[name] = ProviderConfig(
+            name=name,
+            base_url=base_url,
+            api_key_env=api_key_env,
+        )
+    return providers
+
+
+def parse_model_routes(
+    value: Any,
+    providers: Mapping[str, ProviderConfig],
+) -> dict[str, ModelRoute]:
+    if value is MISSING or value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ValueError("`models` must be a YAML mapping")
+    if not providers:
+        raise ValueError("`models` requires at least one configured provider")
+
+    routes: dict[str, ModelRoute] = {}
+    for raw_alias, raw_route in value.items():
+        alias = str(raw_alias).strip()
+        if not alias:
+            raise ValueError("Model aliases must not be empty")
+        if not isinstance(raw_route, Mapping):
+            raise ValueError(f"Model route {alias!r} must be a YAML mapping")
+        provider = str(raw_route.get("provider") or "").strip()
+        if provider not in providers:
+            raise ValueError(
+                f"Model route {alias!r} references unknown provider {provider!r}"
+            )
+        upstream_model = str(raw_route.get("model") or alias).strip()
+        if not upstream_model:
+            raise ValueError(f"Model route {alias!r} requires a model name")
+        routes[alias] = ModelRoute(
+            alias=alias,
+            provider=provider,
+            upstream_model=upstream_model,
+        )
+    return routes
+
+
+@dataclass(frozen=True)
 class ProxyConfig:
     host: str = DEFAULT_HOST
     port: int = DEFAULT_PORT
     upstream_base_url: str = DEFAULT_UPSTREAM_BASE_URL
     upstream_model: str = DEFAULT_UPSTREAM_MODEL
+    providers: dict[str, ProviderConfig] = field(default_factory=dict)
+    model_routes: dict[str, ModelRoute] = field(default_factory=dict)
     thinking: str = DEFAULT_THINKING
     reasoning_effort: str = DEFAULT_REASONING_EFFORT
     request_timeout: float = DEFAULT_REQUEST_TIMEOUT
@@ -210,6 +308,39 @@ class ProxyConfig:
     verbose: bool = DEFAULT_VERBOSE
     trace_dir: Path | None = None
 
+    def resolve_route(self, requested_model: str | None = None) -> ResolvedRoute:
+        model = str(requested_model or self.upstream_model).strip()
+        if self.model_routes:
+            route = self.model_routes.get(model)
+            if route is None:
+                available = ", ".join(self.model_routes)
+                raise UnknownModelError(
+                    f"Unknown model {model!r}; configured models: {available}"
+                )
+            provider = self.providers[route.provider]
+            return ResolvedRoute(
+                requested_model=model,
+                provider=provider.name,
+                upstream_base_url=provider.base_url,
+                upstream_model=route.upstream_model,
+                api_key_env=provider.api_key_env,
+            )
+
+        upstream_model = model if model.startswith("deepseek-") else self.upstream_model
+        return ResolvedRoute(
+            requested_model=model,
+            provider="default",
+            upstream_base_url=self.upstream_base_url,
+            upstream_model=upstream_model,
+        )
+
+    def available_models(self) -> list[str]:
+        if self.model_routes:
+            return list(self.model_routes)
+        return list(
+            dict.fromkeys([self.upstream_model, "deepseek-v4-pro", "deepseek-v4-flash"])
+        )
+
     @classmethod
     def from_file(
         cls: type[ProxyConfig],
@@ -217,6 +348,28 @@ class ProxyConfig:
     ) -> "ProxyConfig":
         settings, resolved_config_path = settings_from_config(config_path)
         config_dir = resolved_config_path.parent
+
+        providers = parse_providers(setting_value(settings, "providers"))
+        model_routes = parse_model_routes(setting_value(settings, "models"), providers)
+        configured_model = setting_value(settings, "model")
+        if model_routes:
+            upstream_model = (
+                next(iter(model_routes))
+                if configured_model is MISSING
+                else as_str(configured_model, next(iter(model_routes))).strip()
+            )
+            if upstream_model not in model_routes:
+                raise ValueError(
+                    f"Default model {upstream_model!r} is not defined in `models`"
+                )
+            default_route = model_routes[upstream_model]
+            upstream_base_url = providers[default_route.provider].base_url
+        else:
+            upstream_model = as_str(configured_model, DEFAULT_UPSTREAM_MODEL)
+            upstream_base_url = as_str(
+                setting_value(settings, "base_url"),
+                DEFAULT_UPSTREAM_BASE_URL,
+            ).rstrip("/")
 
         return cls(
             host=as_str(
@@ -227,14 +380,10 @@ class ProxyConfig:
                 setting_value(settings, "port"),
                 DEFAULT_PORT,
             ),
-            upstream_base_url=as_str(
-                setting_value(settings, "base_url"),
-                DEFAULT_UPSTREAM_BASE_URL,
-            ).rstrip("/"),
-            upstream_model=as_str(
-                setting_value(settings, "model"),
-                DEFAULT_UPSTREAM_MODEL,
-            ),
+            upstream_base_url=upstream_base_url,
+            upstream_model=upstream_model,
+            providers=providers,
+            model_routes=model_routes,
             thinking=normalize_thinking(setting_value(settings, "thinking")),
             reasoning_effort=as_str(
                 setting_value(settings, "reasoning_effort"),

@@ -213,6 +213,53 @@ def restore_custom_apply_patch_response(body: bytes, streaming: bool) -> bytes:
     return b"\n".join(rewritten) + (b"\n" if body.endswith((b"\n", b"\r")) else b"")
 
 
+def rewrite_responses_model(body: bytes, streaming: bool, model: str) -> bytes:
+    if not streaming:
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return body
+        _rewrite_model_fields(payload, model)
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode(
+            "utf-8"
+        )
+
+    rewritten: list[bytes] = []
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith(b"data:"):
+            rewritten.append(line)
+            continue
+        data = stripped[len(b"data:") :].strip()
+        if not data or data == b"[DONE]":
+            rewritten.append(line)
+            continue
+        try:
+            event = json.loads(data.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            rewritten.append(line)
+            continue
+        _rewrite_model_fields(event, model)
+        rewritten.append(
+            b"data: "
+            + json.dumps(event, ensure_ascii=False, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        )
+    return b"\n".join(rewritten) + (b"\n" if body.endswith((b"\n", b"\r")) else b"")
+
+
+def _rewrite_model_fields(value: Any, model: str) -> None:
+    if isinstance(value, dict):
+        if "model" in value:
+            value["model"] = model
+        for child in value.values():
+            _rewrite_model_fields(child, model)
+    elif isinstance(value, list):
+        for child in value:
+            _rewrite_model_fields(child, model)
+
+
 def repair_responses_request(payload: dict[str, Any]) -> dict[str, Any]:
     repaired = normalize_responses_request(payload)
     request_input = repaired.get("input")

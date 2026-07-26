@@ -6,6 +6,7 @@ import gzip
 from http.client import HTTPException
 from io import BytesIO
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import sys
@@ -18,6 +19,7 @@ import zlib
 
 from .config import (
     ProxyConfig,
+    UnknownModelError,
     default_config_path,
     default_reasoning_content_path,
 )
@@ -34,6 +36,7 @@ from .responses import (
     normalize_responses_request,
     repair_responses_request,
     restore_custom_apply_patch_response,
+    rewrite_responses_model,
 )
 from .streaming import CursorReasoningDisplayAdapter, StreamAccumulator
 from .trace import TraceRequest, TraceWriter
@@ -51,6 +54,10 @@ from .transform import (
 
 
 class RequestBodyTooLarge(ValueError):
+    pass
+
+
+class ProviderApiKeyError(ValueError):
     pass
 
 
@@ -211,12 +218,27 @@ class DeepSeekProxyHandler(BaseHTTPRequestHandler):
             )
             return
 
-        prepared = prepare_upstream_request(
-            payload,
-            self.config,
-            self.reasoning_store,
-            authorization=cursor_authorization,
-        )
+        try:
+            prepared = prepare_upstream_request(
+                payload,
+                self.config,
+                self.reasoning_store,
+                authorization=cursor_authorization,
+            )
+        except UnknownModelError as exc:
+            self._send_json(
+                400,
+                {
+                    "error": {
+                        "message": str(exc),
+                        "type": "unknown_model",
+                        "code": "unknown_model",
+                    }
+                },
+                trace=trace,
+            )
+            self._finish_trace(trace, "rejected", http_status=400, reason=str(exc))
+            return
         if trace is not None:
             trace.record_transform(prepared)
         log_context_summary(prepared)
@@ -261,10 +283,12 @@ class DeepSeekProxyHandler(BaseHTTPRequestHandler):
             LOG.info(
                 (
                     "upstream request metadata: original_model=%s upstream_model=%s "
+                    "provider=%s "
                     "patched_reasoning=%s missing_reasoning=%s %s"
                 ),
                 prepared.original_model,
                 prepared.upstream_model,
+                prepared.provider_name,
                 prepared.patched_reasoning_messages,
                 prepared.missing_reasoning_messages,
                 summarize_chat_payload(prepared.payload),
@@ -276,10 +300,17 @@ class DeepSeekProxyHandler(BaseHTTPRequestHandler):
         upstream_body = json.dumps(
             prepared.payload, ensure_ascii=False, separators=(",", ":")
         ).encode("utf-8")
-        upstream_url = f"{self.config.upstream_base_url}/chat/completions"
+        upstream_url = f"{prepared.upstream_base_url}/chat/completions"
+        try:
+            upstream_authorization = self._upstream_authorization(
+                prepared.api_key_env, cursor_authorization
+            )
+        except ProviderApiKeyError as exc:
+            self._send_provider_api_key_error(exc, trace)
+            return
         upstream_headers = self._upstream_headers(
             stream=bool(prepared.payload.get("stream")),
-            authorization=cursor_authorization,
+            authorization=upstream_authorization,
         )
         if trace is not None:
             trace.record_upstream_request(
@@ -442,13 +473,37 @@ class DeepSeekProxyHandler(BaseHTTPRequestHandler):
             if restore_custom_patch
             else dict(payload)
         )
-        original_payload["model"] = str(
+        original_model = str(
             original_payload.get("model") or self.config.upstream_model
         )
+        try:
+            route = self.config.resolve_route(original_model)
+        except UnknownModelError as exc:
+            self._send_json(
+                400,
+                {
+                    "error": {
+                        "message": str(exc),
+                        "type": "unknown_model",
+                        "code": "unknown_model",
+                    }
+                },
+                trace=trace,
+            )
+            self._finish_trace(trace, "rejected", http_status=400, reason=str(exc))
+            return
+        original_payload["model"] = route.upstream_model
         current_payload = original_payload
         streaming = bool(original_payload.get("stream"))
-        upstream_url = f"{self.config.upstream_base_url}/responses"
-        headers = self._upstream_headers(streaming, authorization)
+        upstream_url = f"{route.upstream_base_url}/responses"
+        try:
+            upstream_authorization = self._upstream_authorization(
+                route.api_key_env, authorization
+            )
+        except ProviderApiKeyError as exc:
+            self._send_provider_api_key_error(exc, trace)
+            return
+        headers = self._upstream_headers(streaming, upstream_authorization)
         retry_limit = self._empty_apply_patch_retry_limit()
 
         for attempt in range(retry_limit + 1):
@@ -496,6 +551,9 @@ class DeepSeekProxyHandler(BaseHTTPRequestHandler):
                     restore_custom_apply_patch_response(response_body, streaming)
                     if restore_custom_patch
                     else response_body
+                )
+                cursor_body = rewrite_responses_model(
+                    cursor_body, streaming, original_model
                 )
                 self._send_buffered_responses_response(
                     upstream_status,
@@ -815,21 +873,13 @@ class DeepSeekProxyHandler(BaseHTTPRequestHandler):
 
     def _send_models(self) -> None:
         created = int(time.time())
-        model_ids = list(
-            dict.fromkeys(
-                [
-                    self.config.upstream_model,
-                    "deepseek-v4-pro",
-                    "deepseek-v4-flash",
-                ]
-            )
-        )
+        model_ids = self.config.available_models()
         models = [
             {
                 "id": model_id,
                 "object": "model",
                 "created": created,
-                "owned_by": "deepseek",
+                "owned_by": "copilot-gpt-proxy",
             }
             for model_id in model_ids
         ]
@@ -895,6 +945,45 @@ class DeepSeekProxyHandler(BaseHTTPRequestHandler):
         if accept_language:
             headers["Accept-Language"] = accept_language
         return headers
+
+    @staticmethod
+    def _upstream_authorization(
+        api_key_env: str | None, cursor_authorization: str
+    ) -> str:
+        if not api_key_env:
+            return cursor_authorization
+        api_key = os.environ.get(api_key_env, "").strip()
+        if not api_key:
+            raise ProviderApiKeyError(
+                f"Provider API key environment variable {api_key_env!r} is not set"
+            )
+        if api_key.lower().startswith("bearer "):
+            return api_key
+        return f"Bearer {api_key}"
+
+    def _send_provider_api_key_error(
+        self,
+        exc: ProviderApiKeyError,
+        trace: TraceRequest | None,
+    ) -> None:
+        LOG.error("%s", exc)
+        self._send_json(
+            502,
+            {
+                "error": {
+                    "message": str(exc),
+                    "type": "provider_api_key_missing",
+                    "code": "provider_api_key_missing",
+                }
+            },
+            trace=trace,
+        )
+        self._finish_trace(
+            trace,
+            "provider_api_key_missing",
+            http_status=502,
+            reason=str(exc),
+        )
 
     def _send_upstream_error(
         self,
@@ -1629,6 +1718,9 @@ def main(argv: list[str] | None = None) -> int:
         updates["upstream_model"] = args.model
     if args.base_url is not None:
         updates["upstream_base_url"] = args.base_url.rstrip("/")
+    if args.model is not None or args.base_url is not None:
+        updates["providers"] = {}
+        updates["model_routes"] = {}
     if args.thinking is not None:
         updates["thinking"] = args.thinking
     if args.reasoning_effort is not None:
@@ -1665,7 +1757,13 @@ def main(argv: list[str] | None = None) -> int:
         config = replace(config, **updates)
 
     configure_logging(verbose=config.verbose)
-    warn_if_insecure_upstream(config.upstream_base_url)
+    upstream_urls = (
+        [provider.base_url for provider in config.providers.values()]
+        if config.providers
+        else [config.upstream_base_url]
+    )
+    for upstream_url in dict.fromkeys(upstream_urls):
+        warn_if_insecure_upstream(upstream_url)
     store = ReasoningStore(
         config.reasoning_content_path,
         max_age_seconds=config.reasoning_cache_max_age_seconds,
@@ -1696,6 +1794,12 @@ def main(argv: list[str] | None = None) -> int:
         "thinking" if config.thinking == "enabled" else "no thinking",
         config.reasoning_effort,
     )
+    if config.model_routes:
+        LOG.info(
+            "model_routes: %s model(s), %s provider(s)",
+            len(config.model_routes),
+            len(config.providers),
+        )
 
     if config.verbose:
         display_reasoning = "off"
@@ -1713,7 +1817,10 @@ def main(argv: list[str] | None = None) -> int:
         LOG.info("trace_dir: %s", trace_writer.session_dir)
         LOG.warning("trace logging enabled; prompts and code will be written to disk")
     if config.verbose:
-        LOG.info("upstream_url: %s/chat/completions", config.upstream_base_url)
+        for provider in config.providers.values():
+            LOG.info("provider %s: %s", provider.name, provider.base_url)
+        if not config.providers:
+            LOG.info("upstream_url: %s/chat/completions", config.upstream_base_url)
     LOG.info("local_base_url: %s", local_base_url)
     LOG.info("api_base_url: %s", local_base_url)
     try:

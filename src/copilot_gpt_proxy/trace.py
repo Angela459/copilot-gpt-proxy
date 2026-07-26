@@ -248,6 +248,8 @@ class TraceRequest:
         self.data["transform"] = {
             "original_model": prepared.original_model,
             "upstream_model": prepared.upstream_model,
+            "provider": prepared.provider_name,
+            "upstream_base_url": prepared.upstream_base_url,
             "cache_namespace": prepared.cache_namespace,
             "patched_reasoning_messages": prepared.patched_reasoning_messages,
             "missing_reasoning_messages": prepared.missing_reasoning_messages,

@@ -18,7 +18,10 @@ from copilot_gpt_proxy.config import (
     DEFAULT_THINKING,
     DEFAULT_UPSTREAM_MODEL,
     DEFAULT_VERBOSE,
+    ModelRoute,
+    ProviderConfig,
     ProxyConfig,
+    UnknownModelError,
     default_config_path,
     default_reasoning_content_path,
 )
@@ -164,6 +167,72 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.reasoning_cache_max_rows, 50)
         self.assertEqual(config.empty_apply_patch, "reject")
         self.assertEqual(config.max_tool_retries, 0)
+
+    def test_loads_and_resolves_multiple_providers_and_models(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.yaml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "model: fast",
+                        "providers:",
+                        "  primary:",
+                        "    base_url: https://primary.example/v1/",
+                        "  backup:",
+                        "    base_url: https://backup.example/v1",
+                        "    api_key_env: BACKUP_API_KEY",
+                        "models:",
+                        "  fast:",
+                        "    provider: primary",
+                        "    model: gpt-fast",
+                        "  strong:",
+                        "    provider: backup",
+                        "    model: gpt-strong",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            config = ProxyConfig.from_file(config_path=config_path)
+
+        self.assertEqual(
+            config.providers["primary"],
+            ProviderConfig("primary", "https://primary.example/v1"),
+        )
+        self.assertEqual(
+            config.model_routes["strong"],
+            ModelRoute("strong", "backup", "gpt-strong"),
+        )
+        self.assertEqual(config.upstream_model, "fast")
+        self.assertEqual(config.available_models(), ["fast", "strong"])
+        route = config.resolve_route("strong")
+        self.assertEqual(route.provider, "backup")
+        self.assertEqual(route.upstream_base_url, "https://backup.example/v1")
+        self.assertEqual(route.upstream_model, "gpt-strong")
+        self.assertEqual(route.api_key_env, "BACKUP_API_KEY")
+
+        with self.assertRaises(UnknownModelError):
+            config.resolve_route("missing")
+
+    def test_model_route_rejects_unknown_provider(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.yaml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "providers:",
+                        "  primary:",
+                        "    base_url: https://primary.example/v1",
+                        "models:",
+                        "  gpt:",
+                        "    provider: missing",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "unknown provider"):
+                ProxyConfig.from_file(config_path=config_path)
 
     def test_invalid_config_values_fall_back_to_defaults(self) -> None:
         with TemporaryDirectory() as temp_dir:

@@ -15,6 +15,7 @@ from copilot_gpt_proxy.responses import (
     normalize_responses_request,
     repair_responses_request,
     restore_custom_apply_patch_response,
+    rewrite_responses_model,
 )
 from copilot_gpt_proxy.server import DeepSeekProxyHandler, DeepSeekProxyServer
 
@@ -115,6 +116,30 @@ def _custom_responses_stream(tool_input: str, completed: bool = True) -> bytes:
 
 
 class ResponsesAccumulatorTests(unittest.TestCase):
+    def test_rewrites_non_streaming_response_model_alias(self) -> None:
+        body = json.dumps(
+            {"model": "upstream-model", "output": [], "status": "completed"}
+        ).encode()
+
+        rewritten = json.loads(
+            rewrite_responses_model(body, streaming=False, model="copilot-alias")
+        )
+
+        self.assertEqual(rewritten["model"], "copilot-alias")
+
+    def test_rewrites_streaming_response_model_alias(self) -> None:
+        body = _event(
+            {
+                "type": "response.completed",
+                "response": {"model": "upstream-model", "output": []},
+            }
+        )
+
+        rewritten = rewrite_responses_model(body, streaming=True, model="copilot-alias")
+        event = json.loads(rewritten.split(b"data: ", 1)[1])
+
+        self.assertEqual(event["response"]["model"], "copilot-alias")
+
     def test_detects_empty_apply_patch_and_completion(self) -> None:
         invalid, completed = inspect_responses_body(_responses_stream("{}"), True)
         self.assertEqual(invalid, ["call_patch"])

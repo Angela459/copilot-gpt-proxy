@@ -6,7 +6,7 @@ import json
 import re
 from typing import Any
 
-from .config import ProxyConfig
+from .config import ProxyConfig, ResolvedRoute
 from .logging import LOG
 from .reasoning_store import (
     ReasoningStore,
@@ -107,6 +107,9 @@ class PreparedRequest:
     payload: dict[str, Any]
     original_model: str
     upstream_model: str
+    upstream_base_url: str
+    provider_name: str
+    api_key_env: str | None
     cache_namespace: str
     patched_reasoning_messages: int
     missing_reasoning_messages: int
@@ -678,15 +681,19 @@ def assistant_needs_reasoning_for_tool_context(
     return False
 
 
+def upstream_route_for(original_model: str, config: ProxyConfig) -> ResolvedRoute:
+    route = config.resolve_route(original_model)
+    if not config.model_routes and not original_model.startswith("deepseek-"):
+        LOG.warning(
+            "rewriting non-DeepSeek model %r to configured fallback %r",
+            original_model,
+            route.upstream_model,
+        )
+    return route
+
+
 def upstream_model_for(original_model: str, config: ProxyConfig) -> str:
-    if original_model.startswith("deepseek-"):
-        return original_model
-    LOG.warning(
-        "rewriting non-DeepSeek model %r to configured fallback %r",
-        original_model,
-        config.upstream_model,
-    )
-    return config.upstream_model
+    return upstream_route_for(original_model, config).upstream_model
 
 
 def reasoning_model_family(upstream_model: str) -> str:
@@ -701,12 +708,13 @@ def reasoning_cache_namespace(
     thinking: Any,
     reasoning_effort: Any,
     authorization: str | None = None,
+    upstream_base_url: str | None = None,
 ) -> str:
     auth_hash = ""
     if authorization:
         auth_hash = hashlib.sha256(authorization.encode("utf-8")).hexdigest()
     payload = {
-        "base_url": config.upstream_base_url,
+        "base_url": upstream_base_url or config.upstream_base_url,
         "model": reasoning_model_family(upstream_model),
         "thinking": thinking,
         "reasoning_effort": reasoning_effort,
@@ -741,7 +749,8 @@ def prepare_upstream_request(
     authorization: str | None = None,
 ) -> PreparedRequest:
     original_model = str(payload.get("model") or config.upstream_model)
-    upstream_model = upstream_model_for(original_model, config)
+    route = upstream_route_for(original_model, config)
+    upstream_model = route.upstream_model
 
     prepared = {
         key: value for key, value in payload.items() if key in SUPPORTED_REQUEST_FIELDS
@@ -801,6 +810,7 @@ def prepare_upstream_request(
         prepared.get("thinking"),
         prepared.get("reasoning_effort"),
         authorization,
+        upstream_base_url=route.upstream_base_url,
     )
     pre_repair_messages, _, _, _ = normalize_messages(
         payload.get("messages"),
@@ -871,6 +881,9 @@ def prepare_upstream_request(
         payload=prepared,
         original_model=original_model,
         upstream_model=upstream_model,
+        upstream_base_url=route.upstream_base_url,
+        provider_name=route.provider,
+        api_key_env=route.api_key_env,
         cache_namespace=cache_namespace,
         patched_reasoning_messages=patched_count,
         missing_reasoning_messages=len(missing_indexes),

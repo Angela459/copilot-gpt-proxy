@@ -78,19 +78,33 @@ The retry must be opt-in/configurable and must preserve the original authorizati
 
 Handle legacy `functions`/`function_call`, Responses-style function calls, and Chat Completions `tool_calls`. Keep unknown tools untouched where possible. Do not silently drop a valid non-`apply_patch` call.
 
-## Configuration direction
+## Provider and model routing
 
-The eventual configuration should make the provider explicit:
+A single proxy process owns one model-routing table. Copilot sends a model alias to one API base URL, and the proxy resolves that alias to a provider URL, upstream model name, and authorization source:
 
 ```yaml
-base_url: https://your-openai-compatible-provider.example/v1
 model: gpt-5.4
-api_key: ${COPILOT_GPT_PROXY_API_KEY}
+
+providers:
+  primary:
+    base_url: https://primary.example/v1
+  backup:
+    base_url: https://backup.example/v1
+    api_key_env: BACKUP_PROVIDER_API_KEY
+
+models:
+  gpt-5.4:
+    provider: primary
+    model: gpt-5.4
+  gpt-5.4-backup:
+    provider: backup
+    model: gpt-5.4
+
 empty_apply_patch: retry_once
-max_tool_retry: 1
+max_tool_retries: 1
 ```
 
-Environment variables are preferable for secrets. Localhost should be the default bind address.
+Provider-specific secrets are referenced by environment-variable name and are never stored in the route itself. If `api_key_env` is omitted, the proxy forwards Copilot's Authorization header. Legacy top-level `base_url` and `model` configurations remain supported as a single-provider fallback.
 
 ## Test plan
 
@@ -116,12 +130,12 @@ The integration test should run a fake upstream server and assert the exact numb
 
 ## Implementation status
 
-The canonical Chat Completions guard, native Responses API passthrough, complete SSE argument assembly, one-retry policy, bounded failure response, configuration, and fake-upstream integration tests are implemented. Validation against a captured third-party request remains future work.
+The canonical Chat Completions guard, native Responses API passthrough, complete SSE argument assembly, one-retry policy, bounded failure response, multi-provider model routing, provider-specific environment-variable authorization, configuration, and fake-upstream integration tests are implemented. Validation against additional third-party providers remains future work.
 
 ## Recommended implementation order
 
 1. Keep the renamed baseline green and remove DeepSeek-specific defaults from the generic path.
 2. Add the canonical tool-call model and validation helpers with pure unit tests. (Done)
 3. Add buffered stream validation and a one-retry state machine. (Done)
-4. Add provider adapters and Copilot-facing configuration.
+4. Add provider adapters and Copilot-facing configuration. (Done)
 5. Verify against a captured, redacted request/response pair from the user's third-party API, then test in Copilot with a disposable project.
