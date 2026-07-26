@@ -55,36 +55,52 @@ uv sync
 model: "gpt-5.4"
 
 providers:
-  primary:
-    base_url: "https://your-provider.example/v1"
+  OpenAI:
+    base_url: "https://api.openai.com/v1"
+  # OpenRouter:
+  #   base_url: "https://openrouter.ai/api/v1"
 
 models:
-  gpt-5.4:
-    provider: primary
-    model: "gpt-5.4"
-  gpt-5.4-mini:
-    provider: primary
-    model: "gpt-5.4-mini"
+  OpenAI:
+    - "gpt-5.4"
+    # - "gpt-5.4-mini"
+    # - "gpt-4.1"
+  # OpenRouter:
+  #   - "openai/gpt-5.4"
+  #   - "anthropic/claude-sonnet-4"
 ```
 
-顶层 `model` 是默认模型别名；`models` 下的名称是 Copilot 使用的模型 ID，内部的 `model` 是发送给对应 Provider 的真实模型名。一个代理进程可以同时路由多个 Provider 和模型。
+`providers` 下直接填写 Provider 名称和对应的 `base_url`，`models` 再按相同的 Provider 名称列出模型。模型名称同时作为 Copilot 使用的模型 ID 和发送给上游的模型 ID，因此同一个模型名称不能同时出现在多个 Provider 下。
 
-如果不同 Provider 使用不同 API Key，为 Provider 配置环境变量名：
+API Key 只在 GitHub Copilot App 中配置。代理不会从 `config.yaml` 或环境变量读取 API Key，也不会保存或切换 Key，只会把 Copilot 当前请求中的 Authorization 转发给所选 Provider。
 
-```yaml
-providers:
-  backup:
-    base_url: "https://another-provider.example/v1"
-    api_key_env: "BACKUP_PROVIDER_API_KEY"
-```
+### 配置项说明
 
-启动前设置对应环境变量：
+| 配置项 | 可用值或格式 | 作用 |
+| --- | --- | --- |
+| `model` | `models` 中已启用的模型名称 | 请求未指定模型时使用的默认模型。 |
+| `providers` | Provider 名称到配置的映射 | 定义代理可以访问的所有 Provider。名称由用户填写，并供 `models` 分组引用。 |
+| `providers.<名称>.base_url` | 以 `http://` 或 `https://` 开头的 API 地址 | Provider 的原始 OpenAI 兼容 API Base URL，通常以 `/v1` 结尾。 |
+| `models` | Provider 名称到模型列表的映射 | 定义每个 Provider 可使用的模型；分组名称必须与 `providers` 中的名称完全一致。 |
+| `models.<Provider>` | 模型名称列表 | 同时作为 Copilot 模型 ID 和上游请求中的模型 ID。 |
+| `thinking` | `enabled` / `disabled` | 是否启用上游推理模式及其历史兼容处理。 |
+| `reasoning_effort` | `low` / `medium` / `high` / `max` / `xhigh` | 指定推理强度；代理会转换为上游支持的等级。 |
+| `display_reasoning` | `true` / `false` | 是否在 Copilot 输出中显示推理内容。 |
+| `collapsible_reasoning` | `true` / `false` | 显示推理内容时，是否使用可折叠区域。 |
+| `host` | IP 地址 | 本地代理监听地址。默认 `127.0.0.1`，仅本机可访问。 |
+| `port` | 端口号 | 本地代理监听端口，默认 `9000`。 |
+| `verbose` | `true` / `false` | 是否输出详细日志；开启后提示词和代码可能出现在终端中。 |
+| `request_timeout` | 秒数 | 请求上游 API 的超时时间。 |
+| `max_request_body_bytes` | 字节数 | Copilot 请求体允许的最大大小。 |
+| `cors` | `true` / `false` | 是否返回允许跨域访问的 CORS 响应头。 |
+| `empty_apply_patch` | `retry_once` / `reject` / `allow` | 空 `apply_patch` 调用的处理策略：重试一次、直接拒绝或原样放行。 |
+| `max_tool_retries` | `0` / `1` | 错误工具调用最多重试几次；当前上限为 1。 |
+| `reasoning_content_path` | 文件路径 | 推理历史缓存数据库位置；相对路径以配置文件所在目录为基准。 |
+| `missing_reasoning_strategy` | `recover` / `reject` | 历史推理内容缺失时自动恢复，或直接拒绝请求。 |
+| `reasoning_cache_max_age_seconds` | 秒数 | 推理缓存的最长保留时间。 |
+| `reasoning_cache_max_rows` | 行数 | 推理缓存数据库最多保留的记录数。 |
 
-```powershell
-$env:BACKUP_PROVIDER_API_KEY = "your-api-key"
-```
-
-未配置 `api_key_env` 的 Provider 会继续使用 Copilot App 中填写的 API Key。
+配置文件中不能出现 `api_key` 或 `api_key_env`；如需切换使用不同 Key 的 Provider，请先在 Copilot App 中改为对应 Provider 的 API Key。
 
 启动代理：
 
@@ -98,7 +114,7 @@ uv run copilot-gpt-proxy
 api_base_url: http://127.0.0.1:9000/v1
 ```
 
-在 GitHub Copilot App 的第三方 API 配置中，将 API Base URL 手动改为终端显示的 `api_base_url`。模型应使用 `config.yaml` 的 `models` 中定义的名称。
+在 GitHub Copilot App 的第三方 API 配置中，将 API Base URL 手动改为终端显示的 `api_base_url`，并填写 Provider 所需的 API Key。模型应使用 `config.yaml` 的 `models` 中已启用的名称。
 
 代理与 Copilot 打开的代码目录无关，但 Copilot 发出请求时代理必须保持运行。
 

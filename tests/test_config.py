@@ -174,20 +174,17 @@ class ConfigTests(unittest.TestCase):
             config_path.write_text(
                 "\n".join(
                     [
-                        "model: fast",
+                        "model: gpt-fast",
                         "providers:",
-                        "  primary:",
-                        "    base_url: https://primary.example/v1/",
-                        "  backup:",
-                        "    base_url: https://backup.example/v1",
-                        "    api_key_env: BACKUP_API_KEY",
+                        "  OpenAI:",
+                        "    base_url: https://openai.example/v1/",
+                        "  OpenRouter:",
+                        "    base_url: https://openrouter.example/v1",
                         "models:",
-                        "  fast:",
-                        "    provider: primary",
-                        "    model: gpt-fast",
-                        "  strong:",
-                        "    provider: backup",
-                        "    model: gpt-strong",
+                        "  OpenAI:",
+                        "    - gpt-fast",
+                        "  OpenRouter:",
+                        "    - gpt-strong",
                     ]
                 ),
                 encoding="utf-8",
@@ -196,20 +193,19 @@ class ConfigTests(unittest.TestCase):
             config = ProxyConfig.from_file(config_path=config_path)
 
         self.assertEqual(
-            config.providers["primary"],
-            ProviderConfig("primary", "https://primary.example/v1"),
+            config.providers["OpenAI"],
+            ProviderConfig("OpenAI", "https://openai.example/v1"),
         )
         self.assertEqual(
-            config.model_routes["strong"],
-            ModelRoute("strong", "backup", "gpt-strong"),
+            config.model_routes["gpt-strong"],
+            ModelRoute("gpt-strong", "OpenRouter", "gpt-strong"),
         )
-        self.assertEqual(config.upstream_model, "fast")
-        self.assertEqual(config.available_models(), ["fast", "strong"])
-        route = config.resolve_route("strong")
-        self.assertEqual(route.provider, "backup")
-        self.assertEqual(route.upstream_base_url, "https://backup.example/v1")
+        self.assertEqual(config.upstream_model, "gpt-fast")
+        self.assertEqual(config.available_models(), ["gpt-fast", "gpt-strong"])
+        route = config.resolve_route("gpt-strong")
+        self.assertEqual(route.provider, "OpenRouter")
+        self.assertEqual(route.upstream_base_url, "https://openrouter.example/v1")
         self.assertEqual(route.upstream_model, "gpt-strong")
-        self.assertEqual(route.api_key_env, "BACKUP_API_KEY")
 
         with self.assertRaises(UnknownModelError):
             config.resolve_route("missing")
@@ -221,11 +217,11 @@ class ConfigTests(unittest.TestCase):
                 "\n".join(
                     [
                         "providers:",
-                        "  primary:",
-                        "    base_url: https://primary.example/v1",
+                        "  OpenAI:",
+                        "    base_url: https://openai.example/v1",
                         "models:",
-                        "  gpt:",
-                        "    provider: missing",
+                        "  MissingProvider:",
+                        "    - gpt",
                     ]
                 ),
                 encoding="utf-8",
@@ -233,6 +229,84 @@ class ConfigTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "unknown provider"):
                 ProxyConfig.from_file(config_path=config_path)
+
+    def test_provider_rejects_api_key_configuration(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.yaml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "providers:",
+                        "  OpenAI:",
+                        "    base_url: https://openai.example/v1",
+                        "    api_key_env: OPENAI_API_KEY",
+                        "models:",
+                        "  OpenAI:",
+                        "    - gpt",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "GitHub Copilot App"):
+                ProxyConfig.from_file(config_path=config_path)
+
+    def test_rejects_top_level_api_key_configuration(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.yaml"
+            config_path.write_text("api_key: sk-test", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "GitHub Copilot App"):
+                ProxyConfig.from_file(config_path=config_path)
+
+    def test_rejects_duplicate_model_across_providers(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.yaml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "providers:",
+                        "  OpenAI:",
+                        "    base_url: https://openai.example/v1",
+                        "  OpenRouter:",
+                        "    base_url: https://openrouter.example/v1",
+                        "models:",
+                        "  OpenAI:",
+                        "    - gpt",
+                        "  OpenRouter:",
+                        "    - gpt",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "multiple providers"):
+                ProxyConfig.from_file(config_path=config_path)
+
+    def test_legacy_per_model_routes_remain_supported(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.yaml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "model: copilot-alias",
+                        "providers:",
+                        "  ExistingProvider:",
+                        "    base_url: https://provider.example/v1",
+                        "models:",
+                        "  copilot-alias:",
+                        "    provider: ExistingProvider",
+                        "    model: upstream-model",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            config = ProxyConfig.from_file(config_path=config_path)
+
+        route = config.resolve_route("copilot-alias")
+        self.assertEqual(route.provider, "ExistingProvider")
+        self.assertEqual(route.upstream_model, "upstream-model")
 
     def test_invalid_config_values_fall_back_to_defaults(self) -> None:
         with TemporaryDirectory() as temp_dir:

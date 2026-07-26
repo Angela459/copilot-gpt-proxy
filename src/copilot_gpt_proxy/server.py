@@ -6,7 +6,6 @@ import gzip
 from http.client import HTTPException
 from io import BytesIO
 import json
-import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import sys
@@ -54,10 +53,6 @@ from .transform import (
 
 
 class RequestBodyTooLarge(ValueError):
-    pass
-
-
-class ProviderApiKeyError(ValueError):
     pass
 
 
@@ -301,16 +296,9 @@ class DeepSeekProxyHandler(BaseHTTPRequestHandler):
             prepared.payload, ensure_ascii=False, separators=(",", ":")
         ).encode("utf-8")
         upstream_url = f"{prepared.upstream_base_url}/chat/completions"
-        try:
-            upstream_authorization = self._upstream_authorization(
-                prepared.api_key_env, cursor_authorization
-            )
-        except ProviderApiKeyError as exc:
-            self._send_provider_api_key_error(exc, trace)
-            return
         upstream_headers = self._upstream_headers(
             stream=bool(prepared.payload.get("stream")),
-            authorization=upstream_authorization,
+            authorization=cursor_authorization,
         )
         if trace is not None:
             trace.record_upstream_request(
@@ -496,14 +484,7 @@ class DeepSeekProxyHandler(BaseHTTPRequestHandler):
         current_payload = original_payload
         streaming = bool(original_payload.get("stream"))
         upstream_url = f"{route.upstream_base_url}/responses"
-        try:
-            upstream_authorization = self._upstream_authorization(
-                route.api_key_env, authorization
-            )
-        except ProviderApiKeyError as exc:
-            self._send_provider_api_key_error(exc, trace)
-            return
-        headers = self._upstream_headers(streaming, upstream_authorization)
+        headers = self._upstream_headers(streaming, authorization)
         retry_limit = self._empty_apply_patch_retry_limit()
 
         for attempt in range(retry_limit + 1):
@@ -945,45 +926,6 @@ class DeepSeekProxyHandler(BaseHTTPRequestHandler):
         if accept_language:
             headers["Accept-Language"] = accept_language
         return headers
-
-    @staticmethod
-    def _upstream_authorization(
-        api_key_env: str | None, cursor_authorization: str
-    ) -> str:
-        if not api_key_env:
-            return cursor_authorization
-        api_key = os.environ.get(api_key_env, "").strip()
-        if not api_key:
-            raise ProviderApiKeyError(
-                f"Provider API key environment variable {api_key_env!r} is not set"
-            )
-        if api_key.lower().startswith("bearer "):
-            return api_key
-        return f"Bearer {api_key}"
-
-    def _send_provider_api_key_error(
-        self,
-        exc: ProviderApiKeyError,
-        trace: TraceRequest | None,
-    ) -> None:
-        LOG.error("%s", exc)
-        self._send_json(
-            502,
-            {
-                "error": {
-                    "message": str(exc),
-                    "type": "provider_api_key_missing",
-                    "code": "provider_api_key_missing",
-                }
-            },
-            trace=trace,
-        )
-        self._finish_trace(
-            trace,
-            "provider_api_key_missing",
-            http_status=502,
-            reason=str(exc),
-        )
 
     def _send_upstream_error(
         self,

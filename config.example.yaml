@@ -4,21 +4,19 @@
 model: "gpt-5.4"
 
 providers:
-  primary:
-    base_url: "https://your-provider.example/v1"
-
-  # Add another provider when it needs a different API URL or API key.
-  # backup:
-  #   base_url: "https://another-provider.example/v1"
-  #   api_key_env: "BACKUP_PROVIDER_API_KEY"
+  OpenAI:
+    base_url: "https://api.openai.com/v1"
+  # OpenRouter:
+  #   base_url: "https://openrouter.ai/api/v1"
 
 models:
-  gpt-5.4:
-    provider: primary
-    model: "gpt-5.4"
-  gpt-5.4-mini:
-    provider: primary
-    model: "gpt-5.4-mini"
+  OpenAI:
+    - "gpt-5.4"
+    # - "gpt-5.4-mini"
+    # - "gpt-4.1"
+  # OpenRouter:
+  #   - "openai/gpt-5.4"
+  #   - "anthropic/claude-sonnet-4"
 
 thinking: enabled
 reasoning_effort: max

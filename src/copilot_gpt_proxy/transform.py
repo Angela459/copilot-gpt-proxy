@@ -109,7 +109,6 @@ class PreparedRequest:
     upstream_model: str
     upstream_base_url: str
     provider_name: str
-    api_key_env: str | None
     cache_namespace: str
     patched_reasoning_messages: int
     missing_reasoning_messages: int
@@ -883,7 +882,6 @@ def prepare_upstream_request(
         upstream_model=upstream_model,
         upstream_base_url=route.upstream_base_url,
         provider_name=route.provider,
-        api_key_env=route.api_key_env,
         cache_namespace=cache_namespace,
         patched_reasoning_messages=patched_count,
         missing_reasoning_messages=len(missing_indexes),

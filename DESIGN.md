@@ -86,25 +86,22 @@ A single proxy process owns one model-routing table. Copilot sends a model alias
 model: gpt-5.4
 
 providers:
-  primary:
-    base_url: https://primary.example/v1
-  backup:
-    base_url: https://backup.example/v1
-    api_key_env: BACKUP_PROVIDER_API_KEY
+  OpenAI:
+    base_url: https://api.openai.com/v1
+  OpenRouter:
+    base_url: https://openrouter.ai/api/v1
 
 models:
-  gpt-5.4:
-    provider: primary
-    model: gpt-5.4
-  gpt-5.4-backup:
-    provider: backup
-    model: gpt-5.4
+  OpenAI:
+    - gpt-5.4
+  OpenRouter:
+    - openai/gpt-5.4
 
 empty_apply_patch: retry_once
 max_tool_retries: 1
 ```
 
-Provider-specific secrets are referenced by environment-variable name and are never stored in the route itself. If `api_key_env` is omitted, the proxy forwards Copilot's Authorization header. Legacy top-level `base_url` and `model` configurations remain supported as a single-provider fallback.
+Provider names map to OpenAI-compatible base URLs, and `models` groups model identifiers under those same names. Model identifiers must be unique across providers so request routing is unambiguous. The proxy never stores provider secrets; it forwards the Authorization header supplied by Copilot App. Legacy top-level `base_url` / `model` and the previous per-model route mapping remain supported.
 
 ## Test plan
 

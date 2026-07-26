@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import json
-import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import threading
 import unittest
-from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -83,22 +81,20 @@ def _upstream_fixture() -> _Fixture:
 
 class MultiProviderRoutingTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.primary = _upstream_fixture()
-        self.backup = _upstream_fixture()
+        self.openai = _upstream_fixture()
+        self.openrouter = _upstream_fixture()
         self.store = ReasoningStore(":memory:")
         proxy = DeepSeekProxyServer(("127.0.0.1", 0), DeepSeekProxyHandler)
         proxy.config = ProxyConfig(
-            upstream_base_url=self.primary.url,
-            upstream_model="fast",
+            upstream_base_url=self.openai.url,
+            upstream_model="gpt-fast",
             providers={
-                "primary": ProviderConfig("primary", self.primary.url),
-                "backup": ProviderConfig(
-                    "backup", self.backup.url, "BACKUP_PROVIDER_API_KEY"
-                ),
+                "OpenAI": ProviderConfig("OpenAI", self.openai.url),
+                "OpenRouter": ProviderConfig("OpenRouter", self.openrouter.url),
             },
             model_routes={
-                "fast": ModelRoute("fast", "primary", "upstream-fast"),
-                "strong": ModelRoute("strong", "backup", "upstream-strong"),
+                "gpt-fast": ModelRoute("gpt-fast", "OpenAI", "gpt-fast"),
+                "gpt-strong": ModelRoute("gpt-strong", "OpenRouter", "gpt-strong"),
             },
             thinking="disabled",
             display_reasoning=False,
@@ -109,8 +105,8 @@ class MultiProviderRoutingTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.proxy.close()
-        self.primary.close()
-        self.backup.close()
+        self.openai.close()
+        self.openrouter.close()
         self.store.close()
 
     def _post(self, path: str, payload: dict) -> tuple[int, dict]:
@@ -129,35 +125,34 @@ class MultiProviderRoutingTests(unittest.TestCase):
         except HTTPError as exc:
             return exc.code, json.loads(exc.read())
 
-    def test_chat_routes_alias_to_provider_model_and_provider_key(self) -> None:
-        with patch.dict(os.environ, {"BACKUP_PROVIDER_API_KEY": "sk-backup"}):
-            status, response = self._post(
-                "/v1/chat/completions",
-                {
-                    "model": "strong",
-                    "messages": [{"role": "user", "content": "hi"}],
-                },
-            )
+    def test_chat_routes_model_and_forwards_copilot_key(self) -> None:
+        status, response = self._post(
+            "/v1/chat/completions",
+            {
+                "model": "gpt-strong",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
 
         self.assertEqual(status, 200)
-        self.assertEqual(response["model"], "strong")
-        self.assertEqual(self.primary.server.requests, [])  # type: ignore[attr-defined]
-        request = self.backup.server.requests[0]  # type: ignore[attr-defined]
+        self.assertEqual(response["model"], "gpt-strong")
+        self.assertEqual(self.openai.server.requests, [])  # type: ignore[attr-defined]
+        request = self.openrouter.server.requests[0]  # type: ignore[attr-defined]
         self.assertEqual(request["path"], "/chat/completions")
-        self.assertEqual(request["payload"]["model"], "upstream-strong")
-        self.assertEqual(request["authorization"], "Bearer sk-backup")
+        self.assertEqual(request["payload"]["model"], "gpt-strong")
+        self.assertEqual(request["authorization"], "Bearer sk-from-copilot")
 
     def test_responses_routes_alias_and_restores_response_model(self) -> None:
         status, response = self._post(
             "/v1/responses",
-            {"model": "fast", "input": "hi"},
+            {"model": "gpt-fast", "input": "hi"},
         )
 
         self.assertEqual(status, 200)
-        self.assertEqual(response["model"], "fast")
-        request = self.primary.server.requests[0]  # type: ignore[attr-defined]
+        self.assertEqual(response["model"], "gpt-fast")
+        request = self.openai.server.requests[0]  # type: ignore[attr-defined]
         self.assertEqual(request["path"], "/responses")
-        self.assertEqual(request["payload"]["model"], "upstream-fast")
+        self.assertEqual(request["payload"]["model"], "gpt-fast")
         self.assertEqual(request["authorization"], "Bearer sk-from-copilot")
 
     def test_unknown_model_is_rejected_without_upstream_request(self) -> None:
@@ -171,28 +166,17 @@ class MultiProviderRoutingTests(unittest.TestCase):
 
         self.assertEqual(status, 400)
         self.assertEqual(response["error"]["code"], "unknown_model")
-        self.assertEqual(self.primary.server.requests, [])  # type: ignore[attr-defined]
-        self.assertEqual(self.backup.server.requests, [])  # type: ignore[attr-defined]
+        self.assertEqual(self.openai.server.requests, [])  # type: ignore[attr-defined]
+        self.assertEqual(self.openrouter.server.requests, [])  # type: ignore[attr-defined]
 
     def test_models_endpoint_lists_configured_aliases(self) -> None:
         with urlopen(f"{self.proxy.url}/v1/models", timeout=5) as response:
             payload = json.loads(response.read())
 
-        self.assertEqual([model["id"] for model in payload["data"]], ["fast", "strong"])
-
-    def test_missing_provider_api_key_is_reported(self) -> None:
-        with patch.dict(os.environ, {}, clear=True):
-            status, response = self._post(
-                "/v1/chat/completions",
-                {
-                    "model": "strong",
-                    "messages": [{"role": "user", "content": "hi"}],
-                },
-            )
-
-        self.assertEqual(status, 502)
-        self.assertEqual(response["error"]["code"], "provider_api_key_missing")
-        self.assertEqual(self.backup.server.requests, [])  # type: ignore[attr-defined]
+        self.assertEqual(
+            [model["id"] for model in payload["data"]],
+            ["gpt-fast", "gpt-strong"],
+        )
 
 
 if __name__ == "__main__":

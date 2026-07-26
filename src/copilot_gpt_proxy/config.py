@@ -41,12 +41,11 @@ DEFAULT_CONFIG_TEXT = f"""{DEFAULT_CONFIG_HEADER}
 # `model` is the default alias when a request has no model.
 model: {DEFAULT_UPSTREAM_MODEL}
 providers:
-  deepseek:
+  DeepSeek:
     base_url: {DEFAULT_UPSTREAM_BASE_URL}
 models:
-  {DEFAULT_UPSTREAM_MODEL}:
-    provider: deepseek
-    model: {DEFAULT_UPSTREAM_MODEL}
+  DeepSeek:
+    - {DEFAULT_UPSTREAM_MODEL}
 thinking: {DEFAULT_THINKING}
 reasoning_effort: {DEFAULT_REASONING_EFFORT}
 display_reasoning: {str(DEFAULT_DISPLAY_REASONING).lower()}
@@ -197,7 +196,6 @@ def normalize_empty_apply_patch(value: Any) -> str:
 class ProviderConfig:
     name: str
     base_url: str
-    api_key_env: str | None = None
 
 
 @dataclass(frozen=True)
@@ -213,7 +211,6 @@ class ResolvedRoute:
     provider: str
     upstream_base_url: str
     upstream_model: str
-    api_key_env: str | None = None
 
 
 class UnknownModelError(ValueError):
@@ -233,19 +230,17 @@ def parse_providers(value: Any) -> dict[str, ProviderConfig]:
             raise ValueError("Provider names must not be empty")
         if not isinstance(raw_provider, Mapping):
             raise ValueError(f"Provider {name!r} must be a YAML mapping")
+        if "api_key" in raw_provider or "api_key_env" in raw_provider:
+            raise ValueError(
+                f"Provider {name!r} must not configure an API key; "
+                "set it in GitHub Copilot App"
+            )
         base_url = str(raw_provider.get("base_url") or "").strip().rstrip("/")
         if not base_url:
             raise ValueError(f"Provider {name!r} requires `base_url`")
-        raw_api_key_env = raw_provider.get("api_key_env")
-        api_key_env = (
-            str(raw_api_key_env).strip() if raw_api_key_env is not None else None
-        )
-        if api_key_env == "":
-            api_key_env = None
         providers[name] = ProviderConfig(
             name=name,
             base_url=base_url,
-            api_key_env=api_key_env,
         )
     return providers
 
@@ -262,12 +257,37 @@ def parse_model_routes(
         raise ValueError("`models` requires at least one configured provider")
 
     routes: dict[str, ModelRoute] = {}
+    grouped = all(isinstance(models, list) for models in value.values())
+    legacy = all(isinstance(route, Mapping) for route in value.values())
+    if not grouped and not legacy:
+        raise ValueError("`models` must group model-name lists by provider name")
+
+    if grouped:
+        for raw_provider, raw_models in value.items():
+            provider = str(raw_provider).strip()
+            if provider not in providers:
+                raise ValueError(f"Models reference unknown provider {provider!r}")
+            for raw_model in raw_models:
+                if not isinstance(raw_model, str) or not raw_model.strip():
+                    raise ValueError(
+                        f"Provider {provider!r} contains an invalid model name"
+                    )
+                model = raw_model.strip()
+                if model in routes:
+                    raise ValueError(
+                        f"Model {model!r} is configured under multiple providers"
+                    )
+                routes[model] = ModelRoute(
+                    alias=model,
+                    provider=provider,
+                    upstream_model=model,
+                )
+        return routes
+
     for raw_alias, raw_route in value.items():
         alias = str(raw_alias).strip()
         if not alias:
-            raise ValueError("Model aliases must not be empty")
-        if not isinstance(raw_route, Mapping):
-            raise ValueError(f"Model route {alias!r} must be a YAML mapping")
+            raise ValueError("Legacy model aliases must not be empty")
         provider = str(raw_route.get("provider") or "").strip()
         if provider not in providers:
             raise ValueError(
@@ -276,11 +296,7 @@ def parse_model_routes(
         upstream_model = str(raw_route.get("model") or alias).strip()
         if not upstream_model:
             raise ValueError(f"Model route {alias!r} requires a model name")
-        routes[alias] = ModelRoute(
-            alias=alias,
-            provider=provider,
-            upstream_model=upstream_model,
-        )
+        routes[alias] = ModelRoute(alias, provider, upstream_model)
     return routes
 
 
@@ -323,7 +339,6 @@ class ProxyConfig:
                 provider=provider.name,
                 upstream_base_url=provider.base_url,
                 upstream_model=route.upstream_model,
-                api_key_env=provider.api_key_env,
             )
 
         upstream_model = model if model.startswith("deepseek-") else self.upstream_model
@@ -348,6 +363,12 @@ class ProxyConfig:
     ) -> "ProxyConfig":
         settings, resolved_config_path = settings_from_config(config_path)
         config_dir = resolved_config_path.parent
+
+        if "api_key" in settings or "api_key_env" in settings:
+            raise ValueError(
+                "API keys must not be configured in config.yaml; "
+                "set them in GitHub Copilot App"
+            )
 
         providers = parse_providers(setting_value(settings, "providers"))
         model_routes = parse_model_routes(setting_value(settings, "models"), providers)
