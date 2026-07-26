@@ -21,7 +21,6 @@ from .config import (
     default_config_path,
     default_reasoning_content_path,
 )
-from .copilot_config import load_copilot_settings, update_copilot_proxy_url
 from .logging import (
     LOG,
     TerminalSpinner,
@@ -1222,24 +1221,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=Path,
         help=f"YAML config file, default {default_config_path()}",
     )
-    parser.add_argument(
-        "--copilot-settings",
-        type=Path,
-        help=(
-            "Explicit VS Code/Copilot settings.json path; imports only the "
-            "selected model's non-secret base URL and model ID"
-        ),
-    )
-    parser.add_argument(
-        "--copilot-model-id",
-        help="Model ID to select from --copilot-settings",
-    )
-    parser.add_argument(
-        "--inspect-copilot-settings",
-        type=Path,
-        metavar="PATH",
-        help="Print non-secret Copilot settings from PATH and exit",
-    )
     parser.add_argument("--host", help="Bind host, default from config or 127.0.0.1")
     parser.add_argument(
         "--port",
@@ -1648,20 +1629,6 @@ def warn_if_insecure_upstream(url: str) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
-    if args.inspect_copilot_settings is not None:
-        try:
-            settings = load_copilot_settings(args.inspect_copilot_settings)
-        except ValueError as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            return 2
-        print(
-            json.dumps(
-                settings.public_dict(args.copilot_model_id),
-                ensure_ascii=False,
-                indent=2,
-            )
-        )
-        return 0
     try:
         config = ProxyConfig.from_file(config_path=args.config_path)
     except ValueError as exc:
@@ -1669,31 +1636,6 @@ def main(argv: list[str] | None = None) -> int:
         LOG.error("%s", exc)
         return 2
     updates: dict[str, Any] = {}
-    if args.copilot_settings is not None:
-        try:
-            copilot_settings = load_copilot_settings(args.copilot_settings)
-        except ValueError as exc:
-            configure_logging(verbose=bool(args.verbose))
-            LOG.error("%s", exc)
-            return 2
-        selected_model = copilot_settings.selected_model(args.copilot_model_id)
-        if selected_model is None:
-            configure_logging(verbose=bool(args.verbose))
-            LOG.error("No Copilot model matched the requested selection")
-            return 2
-        if selected_model.api_mode not in {None, "openai", "openai-responses"}:
-            configure_logging(verbose=bool(args.verbose))
-            LOG.error(
-                "Copilot model %s uses unsupported apiMode=%s; "
-                "supported modes are openai and openai-responses",
-                selected_model.model_id,
-                selected_model.api_mode,
-            )
-            return 2
-        selected_base_url = selected_model.base_url or copilot_settings.base_url
-        if selected_base_url:
-            updates["upstream_base_url"] = selected_base_url.rstrip("/")
-        updates["upstream_model"] = selected_model.model_id
     if args.host is not None:
         updates["host"] = args.host
     if args.port is not None:
@@ -1783,26 +1725,6 @@ def main(argv: list[str] | None = None) -> int:
     api_base_url = (
         f"{public_url.rstrip('/')}/v1" if public_url is not None else local_base_url
     )
-    if config.copilot_settings_path is not None and config.copilot_model_id:
-        try:
-            changed = update_copilot_proxy_url(
-                config.copilot_settings_path,
-                config.copilot_model_id,
-                api_base_url,
-            )
-        except (OSError, ValueError) as exc:
-            LOG.error("failed to update Copilot settings: %s", exc)
-            if tunnel is not None:
-                tunnel.stop()
-            server.server_close()
-            store.close()
-            return 2
-        LOG.info(
-            "copilot_api_base_url: %s (%s)",
-            api_base_url,
-            "updated" if changed else "already configured",
-        )
-
     LOG.info(
         "default_model: %s (%s, %s)",
         config.upstream_model,

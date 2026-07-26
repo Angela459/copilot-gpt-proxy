@@ -206,6 +206,13 @@ def normalize_empty_apply_patch(value: Any) -> str:
     return DEFAULT_EMPTY_APPLY_PATCH
 
 
+def normalize_copilot_wire_api(value: Any) -> str:
+    wire_api = as_str(value, "responses").strip().lower()
+    if wire_api in {"completions", "responses"}:
+        return wire_api
+    return "responses"
+
+
 @dataclass(frozen=True)
 class ProxyConfig:
     host: str = DEFAULT_HOST
@@ -229,8 +236,8 @@ class ProxyConfig:
     ngrok: bool = DEFAULT_NGROK
     ngrok_url: str | None = None
     trace_dir: Path | None = None
-    copilot_settings_path: Path | None = None
-    copilot_model_id: str | None = None
+    copilot_app_path: Path | None = None
+    copilot_wire_api: str = "responses"
 
     @classmethod
     def from_file(
@@ -324,11 +331,11 @@ class ProxyConfig:
                 DEFAULT_NGROK,
             ),
             ngrok_url=as_optional_str(setting_value(settings, "ngrok_url")),
-            copilot_settings_path=as_optional_path(
-                setting_value(settings, "copilot_settings_path"),
+            copilot_app_path=as_optional_path(
+                setting_value(settings, "copilot_app_path"),
                 config_dir,
             ),
-            copilot_model_id=as_optional_str(
-                setting_value(settings, "copilot_model_id")
+            copilot_wire_api=normalize_copilot_wire_api(
+                setting_value(settings, "copilot_wire_api")
             ),
         )

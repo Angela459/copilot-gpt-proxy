@@ -36,23 +36,23 @@ Windows users can double-click:
 start.bat
 ```
 
-The launcher checks only these fixed locations for the current Windows user; it does not enumerate or scan other directories. `%APPDATA%` is the current user's application configuration folder, and each path can be pasted directly into the File Explorer address bar:
+On first run, a file picker asks for `github.exe` in the GitHub Copilot App installation directory. Common locations include:
 
-- Visual Studio Code: `%APPDATA%\Code\User\settings.json`;
-- Visual Studio Code Insiders: `%APPDATA%\Code - Insiders\User\settings.json`;
-- VSCodium: `%APPDATA%\VSCodium\User\settings.json`.
+- `%LOCALAPPDATA%\Programs\GitHub Copilot\github.exe`;
+- `C:\Program Files\GitHub Copilot\github.exe`;
+- another directory selected during installation.
 
-One match is used automatically. Multiple matches are shown with editor names for selection. If none match, a file picker asks the user to select the exact `settings.json` file.
+The program does not scan disks or read or modify VS Code `settings.json`. The upstream third-party API URL and model are stored in `config.yaml` in the project directory. API keys are never written to the proxy configuration.
 
-After model selection, the script generates `config.yaml` and shows a Continue/Cancel confirmation before changing the Copilot API Base URL. The original file is backed up as `settings.json.copilot-gpt-proxy.bak`; JSONC comments and unrelated settings are preserved. API keys are never written to the proxy configuration.
+Completely exit any running GitHub Copilot App before startup. After confirmation, the launcher starts the proxy and reopens the App with Copilot's supported `COPILOT_PROVIDER_*` environment variables, automatically pointing its API Base URL at the proxy.
 
-Select a different directory or model:
+Select a different Copilot App or change the upstream URL or model:
 
 ```powershell
 start.bat --reconfigure
 ```
 
-The program does not scan disks, access VS Code SecretStorage, or print API keys or custom headers.
+The existing third-party API key remains managed by Copilot App. The proxy does not read or print keys or custom headers.
 
 ## Start
 
@@ -66,7 +66,7 @@ Default local URL:
 http://127.0.0.1:9000/v1
 ```
 
-The startup script automatically sets the selected Copilot model's API Base URL to the proxy, so no manual edit is required. The `base_url` in `config.yaml` remains the upstream third-party API used by the proxy; the two addresses are kept separate.
+The launcher temporarily points Copilot's API Base URL to the proxy using the officially supported environment variables, without modifying the App's internal configuration. The `base_url` in `config.yaml` remains the upstream third-party API used by the proxy; the two addresses are kept separate.
 
 ngrok is disabled by default. Enable it explicitly only when Copilot cannot access the local URL:
 
@@ -74,4 +74,4 @@ ngrok is disabled by default. Enable it explicitly only when Copilot cannot acce
 start.bat --ngrok
 ```
 
-The proxy is independent of the business project opened in Copilot. There is no strict startup order, but the proxy must be running before Copilot sends a model request. One proxy process can serve whichever business project Copilot currently has open.
+The proxy is independent of the business project opened in Copilot. Use `start.bat` to start both the proxy and Copilot App. One proxy process can serve whichever business project Copilot currently has open.
