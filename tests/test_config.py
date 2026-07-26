@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from copilot_gpt_proxy.config import (
     DEFAULT_COLLAPSIBLE_REASONING,
+    DEFAULT_CONFIG_VERSION,
     DEFAULT_EMPTY_APPLY_PATCH,
     DEFAULT_MAX_TOOL_RETRIES,
     DEFAULT_MISSING_REASONING_STRATEGY,
@@ -60,7 +61,8 @@ class ConfigTests(unittest.TestCase):
             config_text = config_path.read_text(encoding="utf-8")
 
             self.assertTrue(config_path.exists())
-            self.assertIn(f"model: {DEFAULT_UPSTREAM_MODEL}", config_text)
+            self.assertIn(f"default_model: {DEFAULT_UPSTREAM_MODEL}", config_text)
+            self.assertIn(f"config_version: {DEFAULT_CONFIG_VERSION}", config_text)
             self.assertIn(
                 f"missing_reasoning_strategy: {DEFAULT_MISSING_REASONING_STRATEGY}",
                 config_text,
@@ -174,20 +176,21 @@ class ConfigTests(unittest.TestCase):
             config_path.write_text(
                 "\n".join(
                     [
-                        "model: fast",
-                        "providers:",
-                        "  primary:",
+                        "config_version: 1",
+                        "default_model: fast",
+                        "api_providers:",
+                        "  - name: primary",
                         "    base_url: https://primary.example/v1/",
-                        "  backup:",
+                        "  - name: backup",
                         "    base_url: https://backup.example/v1",
                         "    api_key_env: BACKUP_API_KEY",
                         "models:",
-                        "  fast:",
-                        "    provider: primary",
-                        "    model: gpt-fast",
-                        "  strong:",
-                        "    provider: backup",
-                        "    model: gpt-strong",
+                        "  - name: fast",
+                        "    model_identifier: gpt-fast",
+                        "    api_provider: primary",
+                        "  - name: strong",
+                        "    model_identifier: gpt-strong",
+                        "    api_provider: backup",
                     ]
                 ),
                 encoding="utf-8",
@@ -204,6 +207,7 @@ class ConfigTests(unittest.TestCase):
             ModelRoute("strong", "backup", "gpt-strong"),
         )
         self.assertEqual(config.upstream_model, "fast")
+        self.assertEqual(config.config_version, 1)
         self.assertEqual(config.available_models(), ["fast", "strong"])
         route = config.resolve_route("strong")
         self.assertEqual(route.provider, "backup")
@@ -220,18 +224,82 @@ class ConfigTests(unittest.TestCase):
             config_path.write_text(
                 "\n".join(
                     [
-                        "providers:",
-                        "  primary:",
+                        "api_providers:",
+                        "  - name: primary",
                         "    base_url: https://primary.example/v1",
                         "models:",
-                        "  gpt:",
-                        "    provider: missing",
+                        "  - name: gpt",
+                        "    model_identifier: gpt",
+                        "    api_provider: missing",
                     ]
                 ),
                 encoding="utf-8",
             )
 
             with self.assertRaisesRegex(ValueError, "unknown provider"):
+                ProxyConfig.from_file(config_path=config_path)
+
+    def test_legacy_provider_and_model_mappings_remain_supported(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.yaml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "model: fast",
+                        "providers:",
+                        "  primary:",
+                        "    base_url: https://primary.example/v1",
+                        "models:",
+                        "  fast:",
+                        "    provider: primary",
+                        "    model: upstream-fast",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            config = ProxyConfig.from_file(config_path=config_path)
+
+        route = config.resolve_route("fast")
+        self.assertEqual(route.provider, "primary")
+        self.assertEqual(route.upstream_model, "upstream-fast")
+
+    def test_rejects_unsupported_config_version(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.yaml"
+            config_path.write_text("config_version: 2", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "Unsupported config_version"):
+                ProxyConfig.from_file(config_path=config_path)
+
+    def test_rejects_invalid_config_version(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.yaml"
+            config_path.write_text("config_version: invalid", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "must be an integer"):
+                ProxyConfig.from_file(config_path=config_path)
+
+    def test_rejects_plaintext_provider_api_key(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.yaml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "api_providers:",
+                        "  - name: primary",
+                        "    base_url: https://primary.example/v1",
+                        "    api_key: sk-plaintext",
+                        "models:",
+                        "  - name: gpt",
+                        "    model_identifier: gpt",
+                        "    api_provider: primary",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "plaintext `api_key`"):
                 ProxyConfig.from_file(config_path=config_path)
 
     def test_invalid_config_values_fall_back_to_defaults(self) -> None:

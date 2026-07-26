@@ -31,6 +31,7 @@ DEFAULT_EMPTY_APPLY_PATCH = "retry_once"
 DEFAULT_MAX_TOOL_RETRIES = 1
 DEFAULT_REASONING_CACHE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
 DEFAULT_REASONING_CACHE_MAX_ROWS = 100_000
+DEFAULT_CONFIG_VERSION = 1
 
 DEFAULT_CONFIG_HEADER = (
     "# This file was created automatically in the current directory."
@@ -38,15 +39,16 @@ DEFAULT_CONFIG_HEADER = (
 DEFAULT_CONFIG_TEXT = f"""{DEFAULT_CONFIG_HEADER}
 # API keys are read from Copilot's Authorization header and forwarded upstream.
 
-# `model` is the default alias when a request has no model.
-model: {DEFAULT_UPSTREAM_MODEL}
-providers:
-  deepseek:
+# `default_model` is the alias used when a request has no model.
+config_version: {DEFAULT_CONFIG_VERSION}
+default_model: {DEFAULT_UPSTREAM_MODEL}
+api_providers:
+  - name: deepseek
     base_url: {DEFAULT_UPSTREAM_BASE_URL}
 models:
-  {DEFAULT_UPSTREAM_MODEL}:
-    provider: deepseek
-    model: {DEFAULT_UPSTREAM_MODEL}
+  - name: {DEFAULT_UPSTREAM_MODEL}
+    model_identifier: {DEFAULT_UPSTREAM_MODEL}
+    api_provider: deepseek
 thinking: {DEFAULT_THINKING}
 reasoning_effort: {DEFAULT_REASONING_EFFORT}
 display_reasoning: {str(DEFAULT_DISPLAY_REASONING).lower()}
@@ -193,6 +195,22 @@ def normalize_empty_apply_patch(value: Any) -> str:
     return DEFAULT_EMPTY_APPLY_PATCH
 
 
+def parse_config_version(value: Any) -> int:
+    if value is MISSING or value is None:
+        return DEFAULT_CONFIG_VERSION
+    if isinstance(value, bool):
+        raise ValueError("config_version must be an integer")
+    try:
+        version = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("config_version must be an integer") from exc
+    if version != DEFAULT_CONFIG_VERSION:
+        raise ValueError(
+            f"Unsupported config_version {version}; expected {DEFAULT_CONFIG_VERSION}"
+        )
+    return version
+
+
 @dataclass(frozen=True)
 class ProviderConfig:
     name: str
@@ -223,16 +241,33 @@ class UnknownModelError(ValueError):
 def parse_providers(value: Any) -> dict[str, ProviderConfig]:
     if value is MISSING or value is None:
         return {}
-    if not isinstance(value, Mapping):
-        raise ValueError("`providers` must be a YAML mapping")
+    if isinstance(value, Mapping):
+        items = [
+            dict(provider, name=name)
+            for name, provider in value.items()
+            if isinstance(provider, Mapping)
+        ]
+        if len(items) != len(value):
+            raise ValueError("Each legacy `providers` entry must be a YAML mapping")
+    elif isinstance(value, list):
+        items = value
+    else:
+        raise ValueError("`api_providers` must be a YAML list")
 
     providers: dict[str, ProviderConfig] = {}
-    for raw_name, raw_provider in value.items():
-        name = str(raw_name).strip()
-        if not name:
-            raise ValueError("Provider names must not be empty")
+    for raw_provider in items:
         if not isinstance(raw_provider, Mapping):
-            raise ValueError(f"Provider {name!r} must be a YAML mapping")
+            raise ValueError("Each `api_providers` entry must be a YAML mapping")
+        name = str(raw_provider.get("name") or "").strip()
+        if not name:
+            raise ValueError("Each API provider requires a non-empty `name`")
+        if name in providers:
+            raise ValueError(f"Duplicate API provider name {name!r}")
+        if "api_key" in raw_provider:
+            raise ValueError(
+                f"Provider {name!r} must use `api_key_env`; plaintext `api_key` "
+                "is not supported"
+            )
         base_url = str(raw_provider.get("base_url") or "").strip().rstrip("/")
         if not base_url:
             raise ValueError(f"Provider {name!r} requires `base_url`")
@@ -256,24 +291,40 @@ def parse_model_routes(
 ) -> dict[str, ModelRoute]:
     if value is MISSING or value is None:
         return {}
-    if not isinstance(value, Mapping):
-        raise ValueError("`models` must be a YAML mapping")
+    if isinstance(value, Mapping):
+        items = [
+            dict(route, name=alias)
+            for alias, route in value.items()
+            if isinstance(route, Mapping)
+        ]
+        if len(items) != len(value):
+            raise ValueError("Each legacy `models` entry must be a YAML mapping")
+        legacy = True
+    elif isinstance(value, list):
+        items = value
+        legacy = False
+    else:
+        raise ValueError("`models` must be a YAML list")
     if not providers:
         raise ValueError("`models` requires at least one configured provider")
 
     routes: dict[str, ModelRoute] = {}
-    for raw_alias, raw_route in value.items():
-        alias = str(raw_alias).strip()
-        if not alias:
-            raise ValueError("Model aliases must not be empty")
+    for raw_route in items:
         if not isinstance(raw_route, Mapping):
-            raise ValueError(f"Model route {alias!r} must be a YAML mapping")
-        provider = str(raw_route.get("provider") or "").strip()
+            raise ValueError("Each `models` entry must be a YAML mapping")
+        alias = str(raw_route.get("name") or "").strip()
+        if not alias:
+            raise ValueError("Each model requires a non-empty `name`")
+        if alias in routes:
+            raise ValueError(f"Duplicate model name {alias!r}")
+        provider_key = "provider" if legacy else "api_provider"
+        model_key = "model" if legacy else "model_identifier"
+        provider = str(raw_route.get(provider_key) or "").strip()
         if provider not in providers:
             raise ValueError(
                 f"Model route {alias!r} references unknown provider {provider!r}"
             )
-        upstream_model = str(raw_route.get("model") or alias).strip()
+        upstream_model = str(raw_route.get(model_key) or alias).strip()
         if not upstream_model:
             raise ValueError(f"Model route {alias!r} requires a model name")
         routes[alias] = ModelRoute(
@@ -286,6 +337,7 @@ def parse_model_routes(
 
 @dataclass(frozen=True)
 class ProxyConfig:
+    config_version: int = DEFAULT_CONFIG_VERSION
     host: str = DEFAULT_HOST
     port: int = DEFAULT_PORT
     upstream_base_url: str = DEFAULT_UPSTREAM_BASE_URL
@@ -349,9 +401,13 @@ class ProxyConfig:
         settings, resolved_config_path = settings_from_config(config_path)
         config_dir = resolved_config_path.parent
 
-        providers = parse_providers(setting_value(settings, "providers"))
+        config_version = parse_config_version(setting_value(settings, "config_version"))
+        providers_value = setting_value_any(settings, "api_providers", "providers")
+        providers = parse_providers(providers_value)
         model_routes = parse_model_routes(setting_value(settings, "models"), providers)
-        configured_model = setting_value(settings, "model")
+        if providers and not model_routes:
+            raise ValueError("`api_providers` requires at least one configured model")
+        configured_model = setting_value_any(settings, "default_model", "model")
         if model_routes:
             upstream_model = (
                 next(iter(model_routes))
@@ -372,6 +428,7 @@ class ProxyConfig:
             ).rstrip("/")
 
         return cls(
+            config_version=config_version,
             host=as_str(
                 setting_value(settings, "host"),
                 DEFAULT_HOST,

@@ -83,28 +83,29 @@ Handle legacy `functions`/`function_call`, Responses-style function calls, and C
 A single proxy process owns one model-routing table. Copilot sends a model alias to one API base URL, and the proxy resolves that alias to a provider URL, upstream model name, and authorization source:
 
 ```yaml
-model: gpt-5.4
+config_version: 1
+default_model: gpt-5.4
 
-providers:
-  primary:
+api_providers:
+  - name: primary
     base_url: https://primary.example/v1
-  backup:
+  - name: backup
     base_url: https://backup.example/v1
     api_key_env: BACKUP_PROVIDER_API_KEY
 
 models:
-  gpt-5.4:
-    provider: primary
-    model: gpt-5.4
-  gpt-5.4-backup:
-    provider: backup
-    model: gpt-5.4
+  - name: gpt-5.4
+    model_identifier: gpt-5.4
+    api_provider: primary
+  - name: gpt-5.4-backup
+    model_identifier: gpt-5.4
+    api_provider: backup
 
 empty_apply_patch: retry_once
 max_tool_retries: 1
 ```
 
-Provider-specific secrets are referenced by environment-variable name and are never stored in the route itself. If `api_key_env` is omitted, the proxy forwards Copilot's Authorization header. Legacy top-level `base_url` and `model` configurations remain supported as a single-provider fallback.
+Provider-specific secrets are referenced by environment-variable name and are never stored in the route itself. If `api_key_env` is omitted, the proxy forwards Copilot's Authorization header. Model `name` is the Copilot-facing alias; `model_identifier` is sent upstream. Legacy top-level `base_url` / `model` and mapping-style `providers` / `models` configurations remain supported.
 
 ## Test plan
 
