@@ -114,7 +114,15 @@ The terminal prints the proxy URL after startup:
 api_base_url: http://127.0.0.1:9000/v1
 ```
 
-In the third-party API settings of GitHub Copilot App, manually change API Base URL to the displayed `api_base_url` and enter the API key required by the provider. Use an enabled model name under `models` in `config.yaml`.
+### Configure Copilot App (required)
+
+**In the third-party API settings of GitHub Copilot App, manually change API Base URL to the displayed `api_base_url`:**
+
+```text
+http://127.0.0.1:9000/v1
+```
+
+Continue to enter the API key in Copilot App. Use an enabled model name under `models` in `config.yaml`.
 
 The proxy is independent of the code directory opened in Copilot, but it must remain running while Copilot sends requests.
 

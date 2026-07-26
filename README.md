@@ -114,7 +114,15 @@ uv run copilot-gpt-proxy
 api_base_url: http://127.0.0.1:9000/v1
 ```
 
-在 GitHub Copilot App 的第三方 API 配置中，将 API Base URL 手动改为终端显示的 `api_base_url`，并填写 Provider 所需的 API Key。模型应使用 `config.yaml` 的 `models` 中已启用的名称。
+### 设置 Copilot App（必需）
+
+**在 GitHub Copilot App 的第三方 API 配置中，将 API Base URL 手动改为终端显示的 `api_base_url`：**
+
+```text
+http://127.0.0.1:9000/v1
+```
+
+API Key 仍在 Copilot App 中填写。模型名称应使用 `config.yaml` 的 `models` 中已启用的名称。
 
 代理与 Copilot 打开的代码目录无关，但 Copilot 发出请求时代理必须保持运行。
 
