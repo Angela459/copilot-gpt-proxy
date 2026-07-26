@@ -52,31 +52,28 @@ uv sync
 打开 `config.yaml`，配置 Provider 和模型路由：
 
 ```yaml
-config_version: 1
-default_model: "gpt-5.4"
+model: "gpt-5.4"
 
-api_providers:
-  - name: primary
+providers:
+  primary:
     base_url: "https://your-provider.example/v1"
 
 models:
-  - name: "gpt-5.4"
-    model_identifier: "gpt-5.4"
-    api_provider: primary
-  - name: "gpt-5.4-mini"
-    model_identifier: "gpt-5.4-mini"
-    api_provider: primary
+  gpt-5.4:
+    provider: primary
+    model: "gpt-5.4"
+  gpt-5.4-mini:
+    provider: primary
+    model: "gpt-5.4-mini"
 ```
 
-`default_model` 是默认模型别名；每个模型的 `name` 是 Copilot 使用的模型 ID，`model_identifier` 是发送给 `api_provider` 的真实模型名。一个代理进程可以同时路由多个 Provider 和模型。
-
-旧版 `base_url` / `model` 以及映射形式的 `providers` / `models` 配置仍可继续使用。
+顶层 `model` 是默认模型别名；`models` 下的名称是 Copilot 使用的模型 ID，内部的 `model` 是发送给对应 Provider 的真实模型名。一个代理进程可以同时路由多个 Provider 和模型。
 
 如果不同 Provider 使用不同 API Key，为 Provider 配置环境变量名：
 
 ```yaml
-api_providers:
-  - name: backup
+providers:
+  backup:
     base_url: "https://another-provider.example/v1"
     api_key_env: "BACKUP_PROVIDER_API_KEY"
 ```
@@ -101,7 +98,7 @@ uv run copilot-gpt-proxy
 api_base_url: http://127.0.0.1:9000/v1
 ```
 
-在 GitHub Copilot App 的第三方 API 配置中，将 API Base URL 手动改为终端显示的 `api_base_url`。模型应使用 `config.yaml` 的 `models` 中定义的 `name`。
+在 GitHub Copilot App 的第三方 API 配置中，将 API Base URL 手动改为终端显示的 `api_base_url`。模型应使用 `config.yaml` 的 `models` 中定义的名称。
 
 代理与 Copilot 打开的代码目录无关，但 Copilot 发出请求时代理必须保持运行。
 

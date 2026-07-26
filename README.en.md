@@ -52,31 +52,28 @@ Make a copy of `config.example.yaml` and rename the copy to `config.yaml`.
 Open `config.yaml` and configure providers and model routes:
 
 ```yaml
-config_version: 1
-default_model: "gpt-5.4"
+model: "gpt-5.4"
 
-api_providers:
-  - name: primary
+providers:
+  primary:
     base_url: "https://your-provider.example/v1"
 
 models:
-  - name: "gpt-5.4"
-    model_identifier: "gpt-5.4"
-    api_provider: primary
-  - name: "gpt-5.4-mini"
-    model_identifier: "gpt-5.4-mini"
-    api_provider: primary
+  gpt-5.4:
+    provider: primary
+    model: "gpt-5.4"
+  gpt-5.4-mini:
+    provider: primary
+    model: "gpt-5.4-mini"
 ```
 
-`default_model` is the default model alias. Each model's `name` is the model ID used by Copilot, while `model_identifier` is the real model name sent to its `api_provider`. One proxy process can route multiple providers and models.
-
-Legacy `base_url` / `model` and mapping-style `providers` / `models` configurations remain supported.
+The top-level `model` is the default model alias. Names under `models` are the model IDs used by Copilot, while the nested `model` is the real model name sent to that provider. One proxy process can route multiple providers and models.
 
 If providers use different API keys, configure an environment variable name for each provider:
 
 ```yaml
-api_providers:
-  - name: backup
+providers:
+  backup:
     base_url: "https://another-provider.example/v1"
     api_key_env: "BACKUP_PROVIDER_API_KEY"
 ```
@@ -101,7 +98,7 @@ The terminal prints the proxy URL after startup:
 api_base_url: http://127.0.0.1:9000/v1
 ```
 
-In the third-party API settings of GitHub Copilot App, manually change API Base URL to the displayed `api_base_url`. Use a `name` defined under `models` in `config.yaml` as the model.
+In the third-party API settings of GitHub Copilot App, manually change API Base URL to the displayed `api_base_url`. Use one of the names defined under `models` in `config.yaml` as the model.
 
 The proxy is independent of the code directory opened in Copilot, but it must remain running while Copilot sends requests.
 
