@@ -47,8 +47,6 @@ class ConfigTests(unittest.TestCase):
                 DEFAULT_COLLAPSIBLE_REASONING,
             )
             self.assertIsNone(ProxyConfig().trace_dir)
-            self.assertIsNone(ProxyConfig().copilot_app_path)
-            self.assertEqual(ProxyConfig().copilot_wire_api, "responses")
             self.assertEqual(ProxyConfig().empty_apply_patch, DEFAULT_EMPTY_APPLY_PATCH)
             self.assertEqual(ProxyConfig().max_tool_retries, DEFAULT_MAX_TOOL_RETRIES)
 
@@ -148,8 +146,6 @@ class ConfigTests(unittest.TestCase):
                         "reasoning_cache_max_age_seconds: 60",
                         "reasoning_cache_max_rows: 50",
                         "ngrok_url: https://example.ngrok.dev",
-                        "copilot_app_path: copilot/github.exe",
-                        "copilot_wire_api: completions",
                         "empty_apply_patch: reject",
                         "max_tool_retries: 0",
                     ]
@@ -177,11 +173,6 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.reasoning_cache_max_age_seconds, 60)
         self.assertEqual(config.reasoning_cache_max_rows, 50)
         self.assertEqual(config.ngrok_url, "https://example.ngrok.dev")
-        self.assertEqual(
-            config.copilot_app_path,
-            Path(temp_dir) / "copilot" / "github.exe",
-        )
-        self.assertEqual(config.copilot_wire_api, "completions")
         self.assertEqual(config.empty_apply_patch, "reject")
         self.assertEqual(config.max_tool_retries, 0)
 
@@ -196,7 +187,6 @@ class ConfigTests(unittest.TestCase):
                         "port: nope",
                         "verbose: maybe",
                         "collasible_reasoning: maybe",
-                        "copilot_wire_api: maybe",
                     ]
                 ),
                 encoding="utf-8",
@@ -215,7 +205,6 @@ class ConfigTests(unittest.TestCase):
             config.collapsible_reasoning,
             DEFAULT_COLLAPSIBLE_REASONING,
         )
-        self.assertEqual(config.copilot_wire_api, "responses")
 
     def test_ngrok_url_empty_or_whitespace_is_none(self) -> None:
         with TemporaryDirectory() as temp_dir:

@@ -16,65 +16,46 @@ cd copilot-gpt-proxy
 uv sync
 ```
 
-## 配置
+## 手动配置
 
-仓库提供可提交的配置模板：
-
-```text
-config.example.yaml
-```
-
-真实配置由启动脚本生成在仓库根目录，并已加入 `.gitignore`：
-
-```text
-config.yaml
-```
-
-Windows 用户可以直接双击：
-
-```text
-start.bat
-```
-
-首次运行会打开文件选择框，让用户选择 GitHub Copilot App 安装目录中的 `github.exe`。常见位置包括：
-
-- `%LOCALAPPDATA%\Programs\GitHub Copilot\github.exe`；
-- `C:\Program Files\GitHub Copilot\github.exe`；
-- 安装时自行选择的其他目录。
-
-程序不会扫描磁盘，也不会读取或修改 VS Code 的 `settings.json`。第三方 API 地址和模型保存在项目目录下的 `config.yaml`；API Key 不会写入代理配置。
-
-启动前请完全退出已经运行的 GitHub Copilot App。确认后，脚本会先启动代理，再通过 Copilot 官方支持的 `COPILOT_PROVIDER_*` 环境变量重新打开 App，并自动把 API Base URL 指向代理。
-
-重新选择 Copilot App 或修改上游地址、模型：
+复制配置模板：
 
 ```powershell
-start.bat --reconfigure
+Copy-Item config.example.yaml config.yaml
 ```
 
-Copilot App 中原有的第三方 API Key 会继续由 App 管理，程序不会读取或输出密钥和自定义请求头。
+打开 `config.yaml`，填写第三方 API 的原始地址和模型：
 
-## 启动
+```yaml
+base_url: "https://your-provider.example/v1"
+model: "gpt-5.4"
+```
+
+API Key 不需要写入 `config.yaml`。
+
+启动代理：
 
 ```powershell
-start.bat
+uv run copilot-gpt-proxy --config config.yaml --no-ngrok
 ```
 
-默认本地地址：
+代理启动后，终端会显示：
 
 ```text
-http://127.0.0.1:9000/v1
+api_base_url: http://127.0.0.1:9000/v1
 ```
 
-启动脚本会使用 Copilot 官方的环境变量将 API Base URL 临时设置为代理地址，无需修改 App 的内部配置。`config.yaml` 中的 `base_url` 仍是代理访问第三方 API 的上游地址，两者不会混用。
+在 GitHub Copilot App 的第三方 API 配置中，将 API Base URL 手动改为终端显示的 `api_base_url`。API Key 保持原值，模型应与 `config.yaml` 中的 `model` 一致。
 
-ngrok 默认关闭。只有 Copilot 无法访问本地地址时才需要显式启用：
+代理与 Copilot 打开的代码目录无关，但 Copilot 发出请求时代理必须保持运行。
+
+需要使用 ngrok 时，手动运行：
 
 ```powershell
-start.bat --ngrok
+uv run copilot-gpt-proxy --config config.yaml --ngrok
 ```
 
-代理与 Copilot 打开的业务项目相互独立。请通过 `start.bat` 启动代理和 Copilot App；同一个代理进程可以服务 Copilot 当前打开的任意业务项目。
+然后将 Copilot App 的 API Base URL 改为终端显示的新 `api_base_url`。
 
 ## 致谢
 

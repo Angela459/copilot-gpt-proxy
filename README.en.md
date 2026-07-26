@@ -16,65 +16,46 @@ cd copilot-gpt-proxy
 uv sync
 ```
 
-## Configuration
+## Manual Configuration
 
-A tracked configuration template is provided:
-
-```text
-config.example.yaml
-```
-
-The startup script generates the real configuration in the repository root. It is ignored by Git:
-
-```text
-config.yaml
-```
-
-Windows users can double-click:
-
-```text
-start.bat
-```
-
-On first run, a file picker asks for `github.exe` in the GitHub Copilot App installation directory. Common locations include:
-
-- `%LOCALAPPDATA%\Programs\GitHub Copilot\github.exe`;
-- `C:\Program Files\GitHub Copilot\github.exe`;
-- another directory selected during installation.
-
-The program does not scan disks or read or modify VS Code `settings.json`. The upstream third-party API URL and model are stored in `config.yaml` in the project directory. API keys are never written to the proxy configuration.
-
-Completely exit any running GitHub Copilot App before startup. After confirmation, the launcher starts the proxy and reopens the App with Copilot's supported `COPILOT_PROVIDER_*` environment variables, automatically pointing its API Base URL at the proxy.
-
-Select a different Copilot App or change the upstream URL or model:
+Copy the configuration template:
 
 ```powershell
-start.bat --reconfigure
+Copy-Item config.example.yaml config.yaml
 ```
 
-The existing third-party API key remains managed by Copilot App. The proxy does not read or print keys or custom headers.
+Open `config.yaml` and enter the original third-party API URL and model:
 
-## Start
+```yaml
+base_url: "https://your-provider.example/v1"
+model: "gpt-5.4"
+```
+
+The API key does not need to be stored in `config.yaml`.
+
+Start the proxy:
 
 ```powershell
-start.bat
+uv run copilot-gpt-proxy --config config.yaml --no-ngrok
 ```
 
-Default local URL:
+The terminal prints the proxy URL after startup:
 
 ```text
-http://127.0.0.1:9000/v1
+api_base_url: http://127.0.0.1:9000/v1
 ```
 
-The launcher temporarily points Copilot's API Base URL to the proxy using the officially supported environment variables, without modifying the App's internal configuration. The `base_url` in `config.yaml` remains the upstream third-party API used by the proxy; the two addresses are kept separate.
+In the third-party API settings of GitHub Copilot App, manually change API Base URL to the displayed `api_base_url`. Keep the existing API key and use the same model as `model` in `config.yaml`.
 
-ngrok is disabled by default. Enable it explicitly only when Copilot cannot access the local URL:
+The proxy is independent of the code directory opened in Copilot, but it must remain running while Copilot sends requests.
+
+To use ngrok, run manually:
 
 ```powershell
-start.bat --ngrok
+uv run copilot-gpt-proxy --config config.yaml --ngrok
 ```
 
-The proxy is independent of the business project opened in Copilot. Use `start.bat` to start both the proxy and Copilot App. One proxy process can serve whichever business project Copilot currently has open.
+Then change the Copilot App API Base URL to the new `api_base_url` shown in the terminal.
 
 ## Acknowledgements
 

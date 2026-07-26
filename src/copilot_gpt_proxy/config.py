@@ -167,15 +167,6 @@ def as_path(value: Any, default_path: Path, relative_base: Path) -> Path:
     return relative_base / candidate_path
 
 
-def as_optional_path(value: Any, relative_base: Path) -> Path | None:
-    if value is MISSING or value is None or value == "":
-        return None
-    candidate_path = Path(str(value)).expanduser()
-    if candidate_path.is_absolute():
-        return candidate_path
-    return relative_base / candidate_path
-
-
 def settings_from_config(
     config_path: str | Path | None,
 ) -> tuple[dict[str, Any], Path]:
@@ -206,13 +197,6 @@ def normalize_empty_apply_patch(value: Any) -> str:
     return DEFAULT_EMPTY_APPLY_PATCH
 
 
-def normalize_copilot_wire_api(value: Any) -> str:
-    wire_api = as_str(value, "responses").strip().lower()
-    if wire_api in {"completions", "responses"}:
-        return wire_api
-    return "responses"
-
-
 @dataclass(frozen=True)
 class ProxyConfig:
     host: str = DEFAULT_HOST
@@ -236,8 +220,6 @@ class ProxyConfig:
     ngrok: bool = DEFAULT_NGROK
     ngrok_url: str | None = None
     trace_dir: Path | None = None
-    copilot_app_path: Path | None = None
-    copilot_wire_api: str = "responses"
 
     @classmethod
     def from_file(
@@ -331,11 +313,4 @@ class ProxyConfig:
                 DEFAULT_NGROK,
             ),
             ngrok_url=as_optional_str(setting_value(settings, "ngrok_url")),
-            copilot_app_path=as_optional_path(
-                setting_value(settings, "copilot_app_path"),
-                config_dir,
-            ),
-            copilot_wire_api=normalize_copilot_wire_api(
-                setting_value(settings, "copilot_wire_api")
-            ),
         )
