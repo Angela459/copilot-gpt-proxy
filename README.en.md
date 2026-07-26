@@ -13,7 +13,7 @@ See [DESIGN.md](DESIGN.md) for implementation details, protocol boundaries, and 
 When ChatGPT models perform coding tasks through GitHub Copilot App, the model may repeatedly say that it is about to edit a file without completing the tool call. A common error is:
 
 ```text
-apply_patch requires a non-empty string input
+apply_patch requires a non-empty string input (the patch content).
 ```
 
 The response stream may also terminate early, after which retries fall into the same loop.

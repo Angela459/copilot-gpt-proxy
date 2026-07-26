@@ -13,7 +13,7 @@
 通过 GitHub Copilot App 使用 ChatGPT 模型执行代码任务时，模型可能反复表示“现在开始修改”，却没有真正完成工具调用。常见错误为：
 
 ```text
-apply_patch requires a non-empty string input
+apply_patch requires a non-empty string input (the patch content).
 ```
 
 此外还可能出现流式响应提前结束等错误，并在重试后再次进入相同循环。
