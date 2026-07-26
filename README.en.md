@@ -6,6 +6,29 @@
 
 See [DESIGN.md](DESIGN.md) for implementation details, protocol boundaries, and design trade-offs.
 
+## Problem Addressed
+
+### Symptoms
+
+When ChatGPT models perform coding tasks through GitHub Copilot App, the model may repeatedly say that it is about to edit a file without completing the tool call. The terminal then reports errors such as `apply_patch requires a non-empty string input` or a prematurely terminated response stream, and retries fall into the same loop.
+
+### Cause
+
+As described in this [analysis of the `apply_patch` calling format](https://zhuanlan.zhihu.com/p/2040102122830697685), `apply_patch` expects raw patch text as free-form input. Copilot's agent adapter, a third-party API, and the underlying tool executor may interpret that tool differently. If an intermediate layer converts, wraps, escapes, truncates, or drops the free-form input, the model emits empty or malformed arguments. The executor rejects the call while the model retries against the same tool description, creating a loop. This is a tool-protocol compatibility issue, not an inability of the model to write a patch.
+
+## How It Works
+
+In one sentence: the proxy sits between Copilot App and the third-party API, normalizes requests and responses, intercepts malformed tool calls before they reach Copilot's executor, and forwards an executable result only after a bounded retry.
+
+```mermaid
+flowchart LR
+    A["GitHub Copilot App"] -->|"Model request"| B["Copilot GPT Proxy"]
+    B -->|"Normalize request"| C["Third-party OpenAI-compatible API"]
+    C -->|"Model response"| B
+    B -->|"Empty or malformed tool call: intercept and retry"| C
+    B -->|"Normalized stream and tool calls"| A
+```
+
 ## Installation
 
 Python 3.10+ and [uv](https://docs.astral.sh/uv/) are required.

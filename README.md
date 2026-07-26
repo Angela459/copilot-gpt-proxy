@@ -6,6 +6,29 @@
 
 实现原理、协议边界和设计取舍见 [DESIGN.md](DESIGN.md)。
 
+## 解决的问题
+
+### 现象
+
+通过 GitHub Copilot App 使用 ChatGPT 模型执行代码任务时，模型可能反复表示“现在开始修改”，却没有真正完成工具调用；终端随后出现 `apply_patch requires a non-empty string input`、流式响应提前结束等错误，并在重试后再次进入相同循环。
+
+### 原因
+
+[`apply_patch` 工具调用格式分析](https://zhuanlan.zhihu.com/p/2040102122830697685)指出，`apply_patch` 本应接收原始补丁文本（freeform），但 Copilot 的 Agent 适配层、第三方 API 和底层工具执行器对工具格式的理解可能不一致。freeform 语义在中间链路中被 JSON 化、包装、转义、截断或丢失后，模型会生成空参数或格式错误的调用；执行器拒绝调用，而模型仍依据相同的工具描述继续重试，于是形成循环。这是工具协议兼容问题，不是模型不会编写补丁。
+
+## 工作原理
+
+一句话：本项目位于 Copilot App 与第三方 API 之间，规范化请求和响应，并在畸形工具调用到达 Copilot 执行器前拦截它，有限重试后只转发可执行的结果。
+
+```mermaid
+flowchart LR
+    A["GitHub Copilot App"] -->|"模型请求"| B["Copilot GPT Proxy"]
+    B -->|"规范化请求"| C["第三方 OpenAI 兼容 API"]
+    C -->|"模型响应"| B
+    B -->|"空或畸形工具调用：拦截并有限重试"| C
+    B -->|"规范化的流式响应与工具调用"| A
+```
+
 ## 安装
 
 需要 Python 3.10+ 和 [uv](https://docs.astral.sh/uv/)。
