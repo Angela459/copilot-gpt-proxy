@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0start.ps1"
+uv run python -m copilot_gpt_proxy.launcher %*
 set "proxy_exit_code=%errorlevel%"
 
 if not "%proxy_exit_code%"=="0" (

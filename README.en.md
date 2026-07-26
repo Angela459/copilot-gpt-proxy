@@ -36,14 +36,20 @@ Windows users can double-click:
 start.bat
 ```
 
-Alternatively, run `./start.ps1` in PowerShell. The script displays common configuration locations such as `%APPDATA%\Code\User`, `%APPDATA%\Code - Insiders\User`, and `%APPDATA%\VSCodium\User`, then asks the user to select the directory containing `settings.json`. It inspects only the selected directory and never scans disks.
+The launcher checks only these fixed locations for the current Windows user; it does not enumerate or scan other directories. `%APPDATA%` is the current user's application configuration folder, and each path can be pasted directly into the File Explorer address bar:
+
+- Visual Studio Code: `%APPDATA%\Code\User\settings.json`;
+- Visual Studio Code Insiders: `%APPDATA%\Code - Insiders\User\settings.json`;
+- VSCodium: `%APPDATA%\VSCodium\User\settings.json`.
+
+One match is used automatically. Multiple matches are shown with editor names for selection. If none match, a file picker asks the user to select the exact `settings.json` file.
 
 After model selection, the script generates `config.yaml` and shows a Continue/Cancel confirmation before changing the Copilot API Base URL. The original file is backed up as `settings.json.copilot-gpt-proxy.bak`; JSONC comments and unrelated settings are preserved. API keys are never written to the proxy configuration.
 
 Select a different directory or model:
 
 ```powershell
-.\start.ps1 -Reconfigure
+start.bat --reconfigure
 ```
 
 The program does not scan disks, access VS Code SecretStorage, or print API keys or custom headers.
@@ -51,7 +57,7 @@ The program does not scan disks, access VS Code SecretStorage, or print API keys
 ## Start
 
 ```powershell
-.\start.ps1
+start.bat
 ```
 
 Default local URL:
@@ -65,7 +71,7 @@ The startup script automatically sets the selected Copilot model's API Base URL 
 ngrok is disabled by default. Enable it explicitly only when Copilot cannot access the local URL:
 
 ```powershell
-.\start.ps1 -EnableNgrok
+start.bat --ngrok
 ```
 
 The proxy is independent of the business project opened in Copilot. There is no strict startup order, but the proxy must be running before Copilot sends a model request. One proxy process can serve whichever business project Copilot currently has open.

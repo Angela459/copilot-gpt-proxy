@@ -36,14 +36,20 @@ Windows 用户可以直接双击：
 start.bat
 ```
 
-也可以在 PowerShell 中运行 `./start.ps1`。脚本会显示常见配置位置，例如 `%APPDATA%\Code\User`、`%APPDATA%\Code - Insiders\User` 和 `%APPDATA%\VSCodium\User`，然后让用户选择包含 `settings.json` 的目录。它只检查用户选择的目录，不会扫描磁盘。
+启动程序会根据 Windows 当前登录用户自动检查以下几个固定位置，不会遍历或扫描其他目录。`%APPDATA%` 代表当前用户的应用配置文件夹，可以把下面的路径直接粘贴到文件资源管理器地址栏：
+
+- Visual Studio Code 稳定版：`%APPDATA%\Code\User\settings.json`；
+- Visual Studio Code 预览版：`%APPDATA%\Code - Insiders\User\settings.json`；
+- VSCodium：`%APPDATA%\VSCodium\User\settings.json`。
+
+只找到一个时会直接使用；找到多个时会显示编辑器名称供用户选择；都没找到时才打开文件选择框，让用户选择具体的 `settings.json` 文件。
 
 选择模型后，脚本生成 `config.yaml`，并在修改 Copilot API Base URL 前显示“继续/取消”确认框。原始配置会备份为 `settings.json.copilot-gpt-proxy.bak`，JSONC 注释及其他设置保持不变。API Key 不会写入代理配置。
 
 重新选择目录或模型：
 
 ```powershell
-.\start.ps1 -Reconfigure
+start.bat --reconfigure
 ```
 
 程序不会扫描磁盘、访问 VS Code SecretStorage，或输出 API Key 和自定义请求头。
@@ -51,7 +57,7 @@ start.bat
 ## 启动
 
 ```powershell
-.\start.ps1
+start.bat
 ```
 
 默认本地地址：
@@ -65,7 +71,7 @@ http://127.0.0.1:9000/v1
 ngrok 默认关闭。只有 Copilot 无法访问本地地址时才需要显式启用：
 
 ```powershell
-.\start.ps1 -EnableNgrok
+start.bat --ngrok
 ```
 
 代理与 Copilot 打开的业务项目相互独立。启动顺序没有严格限制，但在 Copilot 发出模型请求前，代理必须保持运行；同一个代理进程可以服务 Copilot 当前打开的任意业务项目。

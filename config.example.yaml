@@ -1,4 +1,4 @@
-# Copy this file to config.yaml or run .\start.ps1 to generate it.
+# Copy this file to config.yaml or run start.bat to generate it.
 # config.yaml is intentionally ignored by Git.
 
 base_url: "__BASE_URL__"
