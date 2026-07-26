@@ -116,7 +116,7 @@ Add fixtures for:
 - valid non-`apply_patch` tools; and
 - authorization redaction in traces.
 
-The integration test should run a fake upstream server and assert the exact number of upstream requests and client-visible SSE events. A live GPT test must remain optional and never run in CI.
+The integration test should run a fake upstream server and assert the exact number of upstream requests and client-visible SSE events. A live GPT test must remain optional.
 
 ## Non-goals and risks
 

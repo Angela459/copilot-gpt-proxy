@@ -29,12 +29,6 @@ dependencies = [
     "PyYAML>=6.0",
 ]
 
-[project.optional-dependencies]
-dev = [
-    "black==24.2.0",
-    "ruff>=0.3.0",
-]
-
 [project.scripts]
 copilot-gpt-proxy = "copilot_gpt_proxy.server:main"
 
@@ -44,6 +38,3 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["copilot_gpt_proxy*"]
-
-[tool.black]
-target-version = ["py310"]
