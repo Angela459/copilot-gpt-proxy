@@ -58,6 +58,8 @@ config.yaml
 http://127.0.0.1:9000/v1
 ```
 
+启动后，将 Copilot App 中用于连接代理的 API Base URL 设置为终端输出的 `api_base_url`。`config.yaml` 中的 `base_url` 是代理访问第三方 API 的上游地址，两者不要混用。
+
 ngrok 默认关闭。只有 Copilot 无法访问本地地址时才需要显式启用：
 
 ```powershell

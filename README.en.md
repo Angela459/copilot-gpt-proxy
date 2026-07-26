@@ -58,6 +58,8 @@ Default local URL:
 http://127.0.0.1:9000/v1
 ```
 
+After startup, set the API Base URL used by Copilot App to the `api_base_url` printed in the terminal. The `base_url` in `config.yaml` is the upstream third-party API used by the proxy; do not interchange these two addresses.
+
 ngrok is disabled by default. Enable it explicitly only when Copilot cannot access the local URL:
 
 ```powershell
