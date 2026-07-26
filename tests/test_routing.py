@@ -8,8 +8,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from copilot_gpt_proxy.config import ModelRoute, ProviderConfig, ProxyConfig
-from copilot_gpt_proxy.reasoning_store import ReasoningStore
-from copilot_gpt_proxy.server import DeepSeekProxyHandler, DeepSeekProxyServer
+from copilot_gpt_proxy.server import GPTProxyHandler, GPTProxyServer
 
 
 class _RoutingUpstream(BaseHTTPRequestHandler):
@@ -83,8 +82,7 @@ class MultiProviderRoutingTests(unittest.TestCase):
     def setUp(self) -> None:
         self.openai = _upstream_fixture()
         self.openrouter = _upstream_fixture()
-        self.store = ReasoningStore(":memory:")
-        proxy = DeepSeekProxyServer(("127.0.0.1", 0), DeepSeekProxyHandler)
+        proxy = GPTProxyServer(("127.0.0.1", 0), GPTProxyHandler)
         proxy.config = ProxyConfig(
             upstream_base_url=self.openai.url,
             upstream_model="gpt-fast",
@@ -99,7 +97,6 @@ class MultiProviderRoutingTests(unittest.TestCase):
             thinking="disabled",
             display_reasoning=False,
         )
-        proxy.reasoning_store = self.store
         proxy.trace_writer = None
         self.proxy = _Fixture(proxy)
 
@@ -107,7 +104,6 @@ class MultiProviderRoutingTests(unittest.TestCase):
         self.proxy.close()
         self.openai.close()
         self.openrouter.close()
-        self.store.close()
 
     def _post(self, path: str, payload: dict) -> tuple[int, dict]:
         request = Request(

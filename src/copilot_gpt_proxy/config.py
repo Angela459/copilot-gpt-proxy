@@ -8,7 +8,6 @@ from typing import Any
 import yaml
 
 CONFIG_FILE_NAME = "config.yaml"
-REASONING_CONTENT_FILE_NAME = "reasoning_content.sqlite3"
 
 TRUE_VALUES = {"1", "true", "yes", "on"}
 FALSE_VALUES = {"0", "false", "no", "off"}
@@ -16,8 +15,8 @@ MISSING = object()
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 9000
-DEFAULT_UPSTREAM_BASE_URL = "https://api.deepseek.com"
-DEFAULT_UPSTREAM_MODEL = "deepseek-v4-pro"
+DEFAULT_UPSTREAM_BASE_URL = "https://api.openai.com/v1"
+DEFAULT_UPSTREAM_MODEL = "gpt-5.4"
 DEFAULT_THINKING = "enabled"
 DEFAULT_REASONING_EFFORT = "max"
 DEFAULT_DISPLAY_REASONING = True
@@ -26,11 +25,8 @@ DEFAULT_VERBOSE = False
 DEFAULT_REQUEST_TIMEOUT = 300.0
 DEFAULT_MAX_REQUEST_BODY_BYTES = 20 * 1024 * 1024
 DEFAULT_CORS = False
-DEFAULT_MISSING_REASONING_STRATEGY = "recover"
 DEFAULT_EMPTY_APPLY_PATCH = "retry_once"
 DEFAULT_MAX_TOOL_RETRIES = 1
-DEFAULT_REASONING_CACHE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
-DEFAULT_REASONING_CACHE_MAX_ROWS = 100_000
 
 DEFAULT_CONFIG_HEADER = (
     "# This file was created automatically in the current directory."
@@ -41,15 +37,15 @@ DEFAULT_CONFIG_TEXT = f"""{DEFAULT_CONFIG_HEADER}
 # `model` is the default alias when a request has no model.
 model: {DEFAULT_UPSTREAM_MODEL}
 providers:
-  DeepSeek:
+  OpenAI:
     base_url: {DEFAULT_UPSTREAM_BASE_URL}
 models:
-  DeepSeek:
+  OpenAI:
     - {DEFAULT_UPSTREAM_MODEL}
 thinking: {DEFAULT_THINKING}
 reasoning_effort: {DEFAULT_REASONING_EFFORT}
 display_reasoning: {str(DEFAULT_DISPLAY_REASONING).lower()}
-collasible_reasoning: {str(DEFAULT_COLLAPSIBLE_REASONING).lower()}
+collapsible_reasoning: {str(DEFAULT_COLLAPSIBLE_REASONING).lower()}
 
 host: {DEFAULT_HOST}
 port: {DEFAULT_PORT}
@@ -59,20 +55,11 @@ max_request_body_bytes: {DEFAULT_MAX_REQUEST_BODY_BYTES}
 cors: {str(DEFAULT_CORS).lower()}
 empty_apply_patch: {DEFAULT_EMPTY_APPLY_PATCH}
 max_tool_retries: {DEFAULT_MAX_TOOL_RETRIES}
-
-reasoning_content_path: {REASONING_CONTENT_FILE_NAME}
-missing_reasoning_strategy: {DEFAULT_MISSING_REASONING_STRATEGY}
-reasoning_cache_max_age_seconds: {DEFAULT_REASONING_CACHE_MAX_AGE_SECONDS}
-reasoning_cache_max_rows: {DEFAULT_REASONING_CACHE_MAX_ROWS}
 """
 
 
 def default_config_path() -> Path:
     return Path.cwd() / CONFIG_FILE_NAME
-
-
-def default_reasoning_content_path() -> Path:
-    return Path.cwd() / REASONING_CONTENT_FILE_NAME
 
 
 def populate_default_config_file(config_path: Path) -> None:
@@ -153,15 +140,6 @@ def as_float(value: Any, default: float) -> float:
         return default
 
 
-def as_path(value: Any, default_path: Path, relative_base: Path) -> Path:
-    if value is MISSING or value is None or value == "":
-        return default_path
-    candidate_path = Path(str(value)).expanduser()
-    if candidate_path.is_absolute():
-        return candidate_path
-    return relative_base / candidate_path
-
-
 def settings_from_config(
     config_path: str | Path | None,
 ) -> tuple[dict[str, Any], Path]:
@@ -176,13 +154,6 @@ def normalize_thinking(value: Any) -> str:
     if thinking in {"enabled", "disabled"}:
         return thinking
     return DEFAULT_THINKING
-
-
-def normalize_missing_reasoning_strategy(value: Any) -> str:
-    strategy = as_str(value, DEFAULT_MISSING_REASONING_STRATEGY).strip().lower()
-    if strategy in {"recover", "reject"}:
-        return strategy
-    return DEFAULT_MISSING_REASONING_STRATEGY
 
 
 def normalize_empty_apply_patch(value: Any) -> str:
@@ -312,12 +283,8 @@ class ProxyConfig:
     reasoning_effort: str = DEFAULT_REASONING_EFFORT
     request_timeout: float = DEFAULT_REQUEST_TIMEOUT
     max_request_body_bytes: int = DEFAULT_MAX_REQUEST_BODY_BYTES
-    reasoning_content_path: Path = field(default_factory=default_reasoning_content_path)
-    missing_reasoning_strategy: str = DEFAULT_MISSING_REASONING_STRATEGY
     empty_apply_patch: str = DEFAULT_EMPTY_APPLY_PATCH
     max_tool_retries: int = DEFAULT_MAX_TOOL_RETRIES
-    reasoning_cache_max_age_seconds: int = DEFAULT_REASONING_CACHE_MAX_AGE_SECONDS
-    reasoning_cache_max_rows: int = DEFAULT_REASONING_CACHE_MAX_ROWS
     display_reasoning: bool = DEFAULT_DISPLAY_REASONING
     collapsible_reasoning: bool = DEFAULT_COLLAPSIBLE_REASONING
     cors: bool = DEFAULT_CORS
@@ -341,28 +308,24 @@ class ProxyConfig:
                 upstream_model=route.upstream_model,
             )
 
-        upstream_model = model if model.startswith("deepseek-") else self.upstream_model
         return ResolvedRoute(
             requested_model=model,
             provider="default",
             upstream_base_url=self.upstream_base_url,
-            upstream_model=upstream_model,
+            upstream_model=model,
         )
 
     def available_models(self) -> list[str]:
         if self.model_routes:
             return list(self.model_routes)
-        return list(
-            dict.fromkeys([self.upstream_model, "deepseek-v4-pro", "deepseek-v4-flash"])
-        )
+        return [self.upstream_model]
 
     @classmethod
     def from_file(
         cls: type[ProxyConfig],
         config_path: str | Path | None = None,
     ) -> "ProxyConfig":
-        settings, resolved_config_path = settings_from_config(config_path)
-        config_dir = resolved_config_path.parent
+        settings, _ = settings_from_config(config_path)
 
         if "api_key" in settings or "api_key_env" in settings:
             raise ValueError(
@@ -418,14 +381,6 @@ class ProxyConfig:
                 setting_value(settings, "max_request_body_bytes"),
                 DEFAULT_MAX_REQUEST_BODY_BYTES,
             ),
-            reasoning_content_path=as_path(
-                setting_value(settings, "reasoning_content_path"),
-                default_reasoning_content_path(),
-                config_dir,
-            ),
-            missing_reasoning_strategy=normalize_missing_reasoning_strategy(
-                setting_value(settings, "missing_reasoning_strategy")
-            ),
             empty_apply_patch=normalize_empty_apply_patch(
                 setting_value(settings, "empty_apply_patch")
             ),
@@ -438,14 +393,6 @@ class ProxyConfig:
                         DEFAULT_MAX_TOOL_RETRIES,
                     ),
                 ),
-            ),
-            reasoning_cache_max_age_seconds=as_int(
-                setting_value(settings, "reasoning_cache_max_age_seconds"),
-                DEFAULT_REASONING_CACHE_MAX_AGE_SECONDS,
-            ),
-            reasoning_cache_max_rows=as_int(
-                setting_value(settings, "reasoning_cache_max_rows"),
-                DEFAULT_REASONING_CACHE_MAX_ROWS,
             ),
             display_reasoning=as_bool(
                 setting_value(settings, "display_reasoning"),

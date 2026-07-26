@@ -20,14 +20,12 @@ from .config import (
     ProxyConfig,
     UnknownModelError,
     default_config_path,
-    default_reasoning_content_path,
 )
 from .logging import (
     LOG,
     TerminalSpinner,
     configure_logging,
 )
-from .reasoning_store import ReasoningStore, conversation_scope
 from .responses import (
     INCOMPLETE_RESPONSES_STREAM_ERROR,
     has_custom_apply_patch_tool,
@@ -37,7 +35,7 @@ from .responses import (
     restore_custom_apply_patch_response,
     rewrite_responses_model,
 )
-from .streaming import CursorReasoningDisplayAdapter, StreamAccumulator
+from .streaming import CopilotReasoningDisplayAdapter, StreamAccumulator
 from .trace import TraceRequest, TraceWriter
 from .tool_guard import (
     EMPTY_APPLY_PATCH_ERROR,
@@ -45,11 +43,7 @@ from .tool_guard import (
     messages_from_completion,
     repair_request,
 )
-from .transform import (
-    RECOVERY_NOTICE_CONTENT,
-    prepare_upstream_request,
-    rewrite_response_body,
-)
+from .transform import prepare_upstream_request, rewrite_response_body
 
 
 class RequestBodyTooLarge(ValueError):
@@ -84,22 +78,17 @@ class BufferedUpstreamResponse:
         self._body.close()
 
 
-class DeepSeekProxyServer(ThreadingHTTPServer):
+class GPTProxyServer(ThreadingHTTPServer):
     config: ProxyConfig
-    reasoning_store: ReasoningStore
     trace_writer: TraceWriter | None
 
 
-class DeepSeekProxyHandler(BaseHTTPRequestHandler):
-    server_version = "DeepSeekPythonProxy/0.1"
+class GPTProxyHandler(BaseHTTPRequestHandler):
+    server_version = "CopilotGPTProxy/0.1"
 
     @property
     def config(self) -> ProxyConfig:
         return self.server.config  # type: ignore[return-value]
-
-    @property
-    def reasoning_store(self) -> ReasoningStore:
-        return self.server.reasoning_store  # type: ignore[return-value]
 
     @property
     def trace_writer(self) -> TraceWriter | None:
@@ -217,8 +206,6 @@ class DeepSeekProxyHandler(BaseHTTPRequestHandler):
             prepared = prepare_upstream_request(
                 payload,
                 self.config,
-                self.reasoning_store,
-                authorization=cursor_authorization,
             )
         except UnknownModelError as exc:
             self._send_json(
@@ -236,56 +223,16 @@ class DeepSeekProxyHandler(BaseHTTPRequestHandler):
             return
         if trace is not None:
             trace.record_transform(prepared)
-        log_context_summary(prepared)
-        if (
-            prepared.missing_reasoning_messages
-            and self.config.missing_reasoning_strategy == "reject"
-        ):
-            LOG.warning(
-                (
-                    "strict missing-reasoning mode rejected request path=%s "
-                    "status=409 reason=missing_reasoning_content count=%s"
-                ),
-                request_path,
-                prepared.missing_reasoning_messages,
-            )
-            self._send_json(
-                409,
-                {
-                    "error": {
-                        "message": (
-                            "copilot-gpt-proxy is running in strict "
-                            "missing-reasoning mode and cannot automatically "
-                            "recover this thinking-mode tool-call history because "
-                            "cached DeepSeek reasoning_content is missing for "
-                            f"{prepared.missing_reasoning_messages} assistant "
-                            "message(s). Restart without "
-                            "`--missing-reasoning-strategy reject`, or pass "
-                            "`--missing-reasoning-strategy recover`, so the proxy "
-                            "can recover from partial chat history automatically."
-                        ),
-                        "type": "missing_reasoning_content",
-                        "code": "missing_reasoning_content",
-                        "missing_reasoning_messages": prepared.missing_reasoning_messages,
-                    }
-                },
-                trace=trace,
-            )
-            self._finish_trace(trace, "rejected", http_status=409)
-            return
 
         if self.config.verbose:
             LOG.info(
                 (
                     "upstream request metadata: original_model=%s upstream_model=%s "
-                    "provider=%s "
-                    "patched_reasoning=%s missing_reasoning=%s %s"
+                    "provider=%s %s"
                 ),
                 prepared.original_model,
                 prepared.upstream_model,
                 prepared.provider_name,
-                prepared.patched_reasoning_messages,
-                prepared.missing_reasoning_messages,
                 summarize_chat_payload(prepared.payload),
             )
 
@@ -405,25 +352,13 @@ class DeepSeekProxyHandler(BaseHTTPRequestHandler):
                     sent_response = self._proxy_streaming_response(
                         response,
                         prepared.original_model,
-                        prepared.payload["messages"],
-                        prepared.cache_namespace,
-                        prepared.recovery_notice,
                         trace=trace,
-                        record_response_scope=prepared.record_response_scope,
-                        record_response_messages=prepared.record_response_messages,
-                        record_response_contexts=prepared.record_response_contexts,
                     )
                 else:
                     sent_response = self._proxy_regular_response(
                         response,
                         prepared.original_model,
-                        prepared.payload["messages"],
-                        prepared.cache_namespace,
-                        prepared.recovery_notice,
                         trace=trace,
-                        record_response_scope=prepared.record_response_scope,
-                        record_response_messages=prepared.record_response_messages,
-                        record_response_contexts=prepared.record_response_contexts,
                     )
                 if not sent_response.sent:
                     spinner.stop()
@@ -962,13 +897,7 @@ class DeepSeekProxyHandler(BaseHTTPRequestHandler):
         self,
         response: Any,
         original_model: str,
-        request_messages: list[dict[str, Any]],
-        cache_namespace: str,
-        recovery_notice: str | None = None,
         trace: TraceRequest | None = None,
-        record_response_scope: str | None = None,
-        record_response_messages: list[dict[str, Any]] | None = None,
-        record_response_contexts: list[tuple[str, list[dict[str, Any]]]] | None = None,
     ) -> ProxyResponseResult:
         body = read_response_body(response)
         upstream_body = body
@@ -977,13 +906,6 @@ class DeepSeekProxyHandler(BaseHTTPRequestHandler):
             body = rewrite_response_body(
                 body,
                 original_model,
-                self.reasoning_store,
-                request_messages,
-                cache_namespace,
-                content_prefix=recovery_notice,
-                scope=record_response_scope,
-                prior_messages=record_response_messages,
-                recording_contexts=record_response_contexts,
                 display_reasoning=self.config.display_reasoning,
                 collapsible_reasoning=self.config.collapsible_reasoning,
             )
@@ -1033,13 +955,7 @@ class DeepSeekProxyHandler(BaseHTTPRequestHandler):
         self,
         response: Any,
         original_model: str,
-        request_messages: list[dict[str, Any]],
-        cache_namespace: str,
-        recovery_notice: str | None = None,
         trace: TraceRequest | None = None,
-        record_response_scope: str | None = None,
-        record_response_messages: list[dict[str, Any]] | None = None,
-        record_response_contexts: list[tuple[str, list[dict[str, Any]]]] | None = None,
     ) -> ProxyResponseResult:
         if trace is not None:
             trace.record_upstream_response(
@@ -1071,85 +987,36 @@ class DeepSeekProxyHandler(BaseHTTPRequestHandler):
         accumulator = StreamAccumulator()
         usage: dict[str, Any] | None = None
         display_adapter = (
-            CursorReasoningDisplayAdapter(self.config.collapsible_reasoning)
+            CopilotReasoningDisplayAdapter(self.config.collapsible_reasoning)
             if self.config.display_reasoning
             else None
         )
-        scope = (
-            record_response_scope
-            if record_response_scope is not None
-            else conversation_scope(request_messages, cache_namespace)
-        )
-        response_prior_messages = (
-            record_response_messages
-            if record_response_messages is not None
-            else request_messages
-        )
-        response_contexts = (
-            record_response_contexts
-            if record_response_contexts is not None
-            else [(scope, response_prior_messages)]
-        )
         finalized = False
-        pending_recovery_notice = recovery_notice
-        try:
-            while True:
-                try:
-                    line = response.readline()
-                except (HTTPException, OSError) as exc:
-                    LOG.warning("upstream streaming response read failed: %s", exc)
-                    return ProxyResponseResult(False, usage)
-                if not line:
-                    break
-                (
-                    rewritten,
-                    finalized,
-                    pending_recovery_notice,
-                    chunk_usage,
-                ) = self._rewrite_sse_line(
-                    line,
-                    original_model,
-                    accumulator,
-                    cache_namespace,
-                    response_contexts,
-                    display_adapter,
-                    pending_recovery_notice,
-                    trace,
-                )
-                if chunk_usage is not None:
-                    usage = chunk_usage
-                if trace is not None:
-                    trace.record_stream_chunk(line, rewritten)
-                if not self._write_to_client(
-                    rewritten, "sending streaming response chunk", flush=True
-                ):
-                    return ProxyResponseResult(False, usage)
-                if finalized:
-                    break
-        finally:
-            # Store partial reasoning whenever the stream exits without
-            # the upstream's [DONE] terminator (client disconnect, upstream
-            # read failure, exception). Without this, a Stop pressed mid-stream
-            # would discard any reasoning the proxy received but never cached.
-            if not finalized:
-                if self.config.verbose:
-                    log_json(
-                        "model streaming assistant messages", accumulator.messages()
-                    )
-                stored = sum(
-                    accumulator.store_reasoning(
-                        self.reasoning_store,
-                        ctx_scope,
-                        cache_namespace,
-                        prior_messages,
-                    )
-                    for ctx_scope, prior_messages in response_contexts
-                )
-                if self.config.verbose and stored:
-                    LOG.info(
-                        "stored %s streaming reasoning cache key(s) before exit",
-                        stored,
-                    )
+        while True:
+            try:
+                line = response.readline()
+            except (HTTPException, OSError) as exc:
+                LOG.warning("upstream streaming response read failed: %s", exc)
+                return ProxyResponseResult(False, usage)
+            if not line:
+                break
+            rewritten, finalized, chunk_usage = self._rewrite_sse_line(
+                line,
+                original_model,
+                accumulator,
+                display_adapter,
+                trace,
+            )
+            if chunk_usage is not None:
+                usage = chunk_usage
+            if trace is not None:
+                trace.record_stream_chunk(line, rewritten)
+            if not self._write_to_client(
+                rewritten, "sending streaming response chunk", flush=True
+            ):
+                return ProxyResponseResult(False, usage)
+            if finalized:
+                break
         return ProxyResponseResult(True, usage)
 
     def _rewrite_sse_line(
@@ -1157,67 +1024,32 @@ class DeepSeekProxyHandler(BaseHTTPRequestHandler):
         line: bytes,
         original_model: str,
         accumulator: StreamAccumulator,
-        cache_namespace: str,
-        response_contexts: list[tuple[str, list[dict[str, Any]]]],
-        display_adapter: CursorReasoningDisplayAdapter | None,
-        recovery_notice: str | None = None,
+        display_adapter: CopilotReasoningDisplayAdapter | None,
         trace: TraceRequest | None = None,
-    ) -> tuple[bytes, bool, str | None, dict[str, Any] | None]:
+    ) -> tuple[bytes, bool, dict[str, Any] | None]:
         stripped = line.strip()
         if not stripped.startswith(b"data:"):
-            return line, False, recovery_notice, None
+            return line, False, None
 
         data = stripped[len(b"data:") :].strip()
         if data == b"[DONE]":
             if self.config.verbose:
                 log_json("model streaming assistant messages", accumulator.messages())
-            stored = sum(
-                accumulator.store_reasoning(
-                    self.reasoning_store,
-                    scope,
-                    cache_namespace,
-                    prior_messages,
-                )
-                for scope, prior_messages in response_contexts
-            )
-            if self.config.verbose and stored:
-                LOG.info("stored %s streaming reasoning cache key(s)", stored)
             prefix = b""
             if display_adapter is None:
-                if recovery_notice:
-                    prefix += sse_data(
-                        recovery_notice_chunk(original_model, recovery_notice)
-                    )
-                return prefix + b"data: [DONE]\n\n", True, None, None
+                return b"data: [DONE]\n\n", True, None
             closing_chunk = display_adapter.flush_chunk(original_model)
             if closing_chunk is not None:
                 prefix += sse_data(closing_chunk)
-            if recovery_notice:
-                prefix += sse_data(
-                    recovery_notice_chunk(original_model, recovery_notice)
-                )
-            return prefix + b"data: [DONE]\n\n", True, None, None
+            return prefix + b"data: [DONE]\n\n", True, None
 
         try:
             chunk = json.loads(data.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError):
-            return line, False, recovery_notice, None
+            return line, False, None
 
         if isinstance(chunk, dict):
-            if recovery_notice and inject_recovery_notice(chunk, recovery_notice):
-                recovery_notice = None
             accumulator.ingest_chunk(chunk)
-            stored = sum(
-                accumulator.store_ready_reasoning(
-                    self.reasoning_store,
-                    scope,
-                    cache_namespace,
-                    prior_messages,
-                )
-                for scope, prior_messages in response_contexts
-            )
-            if self.config.verbose and stored:
-                LOG.info("stored %s streaming reasoning cache key(s)", stored)
             chunk_usage = chunk.get("usage")
             if trace is not None:
                 trace.record_usage(chunk_usage)
@@ -1235,10 +1067,9 @@ class DeepSeekProxyHandler(BaseHTTPRequestHandler):
                     + ending
                 ),
                 False,
-                recovery_notice,
                 chunk_usage if isinstance(chunk_usage, dict) else None,
             )
-        return line, False, recovery_notice, None
+        return line, False, None
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -1259,32 +1090,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--model",
-        help=(
-            "Fallback DeepSeek model when the request has no model, "
-            "default from config or deepseek-v4-pro"
-        ),
+        help="Fallback model when the request has no model, default from config",
     )
     parser.add_argument(
         "--base-url",
-        help=("DeepSeek base URL, default from config or https://api.deepseek.com"),
+        help="OpenAI-compatible base URL, default from config",
     )
     parser.add_argument(
         "--thinking",
         choices=["enabled", "disabled"],
-        help="DeepSeek thinking mode, default from config or enabled",
+        help="Thinking mode, default from config or enabled",
     )
     parser.add_argument(
         "--reasoning-effort",
         choices=["low", "medium", "high", "max", "xhigh"],
-        help="DeepSeek reasoning effort, default from config or max",
-    )
-    parser.add_argument(
-        "--reasoning-content-path",
-        type=Path,
-        help=(
-            "SQLite reasoning_content cache path, "
-            f"default {default_reasoning_content_path()}"
-        ),
+        help="Reasoning effort, default from config or max",
     )
     parser.add_argument(
         "--verbose",
@@ -1301,7 +1121,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--display-reasoning",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="Mirror reasoning_content into Cursor-visible content",
+        help="Mirror provider reasoning output into Copilot-visible content",
     )
     parser.add_argument(
         "--collapsible-reasoning",
@@ -1342,24 +1162,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Maximum accepted request body size, default from config",
     )
     parser.add_argument(
-        "--reasoning-cache-max-age-seconds",
-        type=int,
-        help="Maximum reasoning cache row age in seconds, default from config",
-    )
-    parser.add_argument(
-        "--reasoning-cache-max-rows",
-        type=int,
-        help="Maximum reasoning cache rows, default from config",
-    )
-    parser.add_argument(
-        "--missing-reasoning-strategy",
-        choices=["recover", "reject"],
-        help=(
-            "What to do when required reasoning_content is missing: "
-            "recover (friendly default) or reject (strict debugging mode)"
-        ),
-    )
-    parser.add_argument(
         "--empty-apply-patch",
         choices=["retry_once", "reject", "allow"],
         help=(
@@ -1372,11 +1174,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         choices=[0, 1],
         help="Maximum compatibility retries for malformed tool calls (0 or 1)",
-    )
-    parser.add_argument(
-        "--clear-reasoning-cache",
-        action="store_true",
-        help="Clear the local reasoning_content SQLite cache and exit",
     )
     return parser
 
@@ -1427,30 +1224,12 @@ def log_cursor_request(
     )
 
 
-def log_context_summary(prepared: Any) -> None:
-    status = context_status(prepared)
-    if status == "ok":
-        LOG.info(
-            "├ context status=ok reasoning_context=%s",
-            format_count(prepared.patched_reasoning_messages),
-        )
-        return
-    LOG.info(
-        "├ context status=%s missing=%s recovered=%s dropped=%s",
-        status,
-        format_count(prepared.missing_reasoning_messages),
-        format_count(prepared.recovered_reasoning_messages),
-        format_count(prepared.recovery_dropped_messages),
-    )
-
-
 def log_send_summary(prepared: Any) -> None:
     LOG.info(
-        "├ send    user_msgs=%s messages=%s tools=%s reasoning_content=%s",
+        "├ send    user_msgs=%s messages=%s tools=%s",
         format_count(user_message_count(prepared.payload)),
         format_count(message_count(prepared.payload)),
         format_count(tool_count(prepared.payload)),
-        format_count(reasoning_content_count(prepared.payload)),
     )
 
 
@@ -1462,14 +1241,6 @@ def log_stats_summary(usage: dict[str, Any] | None) -> None:
         format_count(reasoning_token_count(usage)),
         cache_hit_rate(usage),
     )
-
-
-def context_status(prepared: Any) -> str:
-    if prepared.recovered_reasoning_messages:
-        return "recovered"
-    if prepared.missing_reasoning_messages:
-        return "missing"
-    return "ok"
 
 
 def message_count(payload: dict[str, Any]) -> int:
@@ -1490,19 +1261,6 @@ def user_message_count(payload: dict[str, Any]) -> int:
         1
         for message in messages
         if isinstance(message, dict) and message.get("role") == "user"
-    )
-
-
-def reasoning_content_count(payload: dict[str, Any]) -> int:
-    messages = payload.get("messages")
-    if not isinstance(messages, list):
-        return 0
-    return sum(
-        1
-        for message in messages
-        if isinstance(message, dict)
-        and message.get("role") == "assistant"
-        and isinstance(message.get("reasoning_content"), str)
     )
 
 
@@ -1558,45 +1316,6 @@ def sse_data(payload: dict[str, Any]) -> bytes:
         + json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         + b"\n\n"
     )
-
-
-def inject_recovery_notice(chunk: dict[str, Any], notice: str) -> bool:
-    choices = chunk.get("choices")
-    if not isinstance(choices, list):
-        return False
-    for choice in choices:
-        if not isinstance(choice, dict):
-            continue
-        delta = choice.get("delta")
-        if not isinstance(delta, dict):
-            continue
-        if "content" not in delta and not delta.get("tool_calls"):
-            continue
-        existing_content = delta.get("content")
-        delta["content"] = notice + (
-            existing_content if isinstance(existing_content, str) else ""
-        )
-        return True
-    return False
-
-
-def recovery_notice_chunk(
-    model: str,
-    notice: str = RECOVERY_NOTICE_CONTENT,
-) -> dict[str, Any]:
-    return {
-        "id": "chatcmpl-copilot-gpt-proxy-recovery",
-        "object": "chat.completion.chunk",
-        "created": int(time.time()),
-        "model": model,
-        "choices": [
-            {
-                "index": 0,
-                "delta": {"content": notice},
-                "finish_reason": None,
-            }
-        ],
-    }
 
 
 def summarize_chat_payload(payload: dict[str, Any]) -> str:
@@ -1667,8 +1386,6 @@ def main(argv: list[str] | None = None) -> int:
         updates["thinking"] = args.thinking
     if args.reasoning_effort is not None:
         updates["reasoning_effort"] = args.reasoning_effort
-    if args.reasoning_content_path is not None:
-        updates["reasoning_content_path"] = args.reasoning_content_path
     if args.verbose is not None:
         updates["verbose"] = args.verbose
     if args.trace_dir is not None:
@@ -1687,14 +1404,6 @@ def main(argv: list[str] | None = None) -> int:
         updates["empty_apply_patch"] = args.empty_apply_patch
     if args.max_tool_retries is not None:
         updates["max_tool_retries"] = args.max_tool_retries
-    if args.reasoning_cache_max_age_seconds is not None:
-        updates["reasoning_cache_max_age_seconds"] = (
-            args.reasoning_cache_max_age_seconds
-        )
-    if args.reasoning_cache_max_rows is not None:
-        updates["reasoning_cache_max_rows"] = args.reasoning_cache_max_rows
-    if args.missing_reasoning_strategy is not None:
-        updates["missing_reasoning_strategy"] = args.missing_reasoning_strategy
     if updates:
         config = replace(config, **updates)
 
@@ -1706,27 +1415,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     for upstream_url in dict.fromkeys(upstream_urls):
         warn_if_insecure_upstream(upstream_url)
-    store = ReasoningStore(
-        config.reasoning_content_path,
-        max_age_seconds=config.reasoning_cache_max_age_seconds,
-        max_rows=config.reasoning_cache_max_rows,
-    )
-    if args.clear_reasoning_cache:
-        deleted = store.clear()
-        LOG.info("cleared %s reasoning cache row(s)", deleted)
-        store.close()
-        return 0
     trace_writer: TraceWriter | None = None
     if config.trace_dir is not None:
         try:
             trace_writer = TraceWriter(config.trace_dir)
         except OSError as exc:
             LOG.error("failed to initialize trace directory: %s", exc)
-            store.close()
             return 2
-    server = DeepSeekProxyServer((config.host, config.port), DeepSeekProxyHandler)
+    server = GPTProxyServer((config.host, config.port), GPTProxyHandler)
     server.config = config
-    server.reasoning_store = store
     server.trace_writer = trace_writer
 
     local_base_url = f"http://{config.host}:{config.port}/v1"
@@ -1750,8 +1447,6 @@ def main(argv: list[str] | None = None) -> int:
                 "on (collapsible)" if config.collapsible_reasoning else "on"
             )
         LOG.info("display_reasoning: %s", display_reasoning)
-        LOG.info("missing_reasoning_strategy: %s", config.missing_reasoning_strategy)
-        LOG.info("reasoning_cache: %s", config.reasoning_content_path)
         LOG.warning(
             "verbose logging enabled; prompts and code may be written to stdout"
         )
@@ -1771,7 +1466,6 @@ def main(argv: list[str] | None = None) -> int:
         LOG.info("shutting down")
     finally:
         server.server_close()
-        store.close()
     return 0
 
 

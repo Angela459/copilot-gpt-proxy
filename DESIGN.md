@@ -17,7 +17,7 @@ GitHub Copilot App
     -> OpenAI-compatible endpoint exposed by this proxy
     -> request normalizer and tool-call compatibility layer
     -> third-party OpenAI-compatible API / GPT-5.4
-    <- response normalizer, stream assembler, and recovery policy
+    <- response normalizer and stream assembler
     <- Copilot App
 ```
 
@@ -31,10 +31,9 @@ The copied baseline already contains:
 - request and response normalization for OpenAI-style tools;
 - SSE streaming and tool-call delta aggregation;
 - request tracing with authorization redaction;
-- conversation-scoped state storage; and
 - unit tests for protocol and streaming behavior.
 
-These pieces are reusable. The DeepSeek-specific reasoning cache should become an optional compatibility module rather than the center of the new project.
+The proxy is intentionally stateless: it preserves Copilot's complete message and tool-result history instead of reconstructing or dropping prior turns.
 
 ## Compatibility layer
 
@@ -127,12 +126,12 @@ The integration test should run a fake upstream server and assert the exact numb
 
 ## Implementation status
 
-The canonical Chat Completions guard, native Responses API passthrough, complete SSE argument assembly, one-retry policy, bounded failure response, multi-provider model routing, provider-specific environment-variable authorization, configuration, and fake-upstream integration tests are implemented. Validation against additional third-party providers remains future work.
+The canonical Chat Completions guard, native Responses API passthrough, complete SSE argument assembly, one-retry policy, bounded failure response, multi-provider model routing, Copilot Authorization forwarding, configuration, and fake-upstream integration tests are implemented. Validation against additional third-party providers remains future work.
 
 ## Recommended implementation order
 
-1. Keep the renamed baseline green and remove DeepSeek-specific defaults from the generic path.
+1. Preserve complete Copilot message and tool-result history. (Done)
 2. Add the canonical tool-call model and validation helpers with pure unit tests. (Done)
 3. Add buffered stream validation and a one-retry state machine. (Done)
 4. Add provider adapters and Copilot-facing configuration. (Done)
-5. Verify against a captured, redacted request/response pair from the user's third-party API, then test in Copilot with a disposable project.
+5. Verify against captured, redacted request/response pairs from third-party APIs, then test in Copilot with a disposable project.

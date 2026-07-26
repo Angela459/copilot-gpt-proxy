@@ -30,10 +30,9 @@ from copilot_gpt_proxy.logging import (
     ConsoleLogFormatter,
     TerminalSpinner,
 )
-from copilot_gpt_proxy.reasoning_store import ReasoningStore
 from copilot_gpt_proxy.server import (
-    DeepSeekProxyHandler,
-    DeepSeekProxyServer,
+    GPTProxyHandler,
+    GPTProxyServer,
     build_arg_parser,
     read_response_body,
     summarize_chat_payload,
@@ -101,12 +100,9 @@ class _FakeConsole:
         return
 
 
-def _make_handler_stub(wfile: object, **config: object) -> DeepSeekProxyHandler:
-    handler = object.__new__(DeepSeekProxyHandler)
-    handler.server = SimpleNamespace(
-        config=ProxyConfig(**config),
-        reasoning_store=ReasoningStore(":memory:"),
-    )
+def _make_handler_stub(wfile: object, **config: object) -> GPTProxyHandler:
+    handler = object.__new__(GPTProxyHandler)
+    handler.server = SimpleNamespace(config=ProxyConfig(**config))
     handler.wfile = wfile
     handler.close_connection = False
     handler.send_response = lambda status: None
@@ -228,14 +224,14 @@ class CliAndHelperTests(unittest.TestCase):
     def test_summarize_chat_payload_omits_message_content(self) -> None:
         summary = summarize_chat_payload(
             {
-                "model": "deepseek-v4-pro",
+                "model": "gpt-5.4",
                 "stream": True,
                 "messages": [{"role": "user", "content": "secret prompt"}],
                 "tools": [{"type": "function"}],
                 "tool_choice": "auto",
             }
         )
-        self.assertIn("model='deepseek-v4-pro'", summary)
+        self.assertIn("model='gpt-5.4'", summary)
         self.assertIn("messages=1", summary)
         self.assertNotIn("secret prompt", summary)
 
@@ -252,7 +248,7 @@ class HandlerStubTests(unittest.TestCase):
             {
                 "id": "x",
                 "object": "chat.completion",
-                "model": "deepseek-v4-pro",
+                "model": "gpt-5.4",
                 "choices": [
                     {
                         "index": 0,
@@ -262,16 +258,11 @@ class HandlerStubTests(unittest.TestCase):
                 ],
             }
         ).encode("utf-8")
-        try:
-            with self.assertLogs("copilot_gpt_proxy", level="WARNING") as captured:
-                result = handler._proxy_regular_response(
-                    _FakeResponse(body),
-                    "deepseek-v4-pro",
-                    [{"role": "user", "content": "hi"}],
-                    "ns",
-                )
-        finally:
-            handler.server.reasoning_store.close()
+        with self.assertLogs("copilot_gpt_proxy", level="WARNING") as captured:
+            result = handler._proxy_regular_response(
+                _FakeResponse(body),
+                "gpt-5.4",
+            )
         self.assertFalse(result.sent)
         self.assertIn("sending upstream response body", "\n".join(captured.output))
 
@@ -279,7 +270,7 @@ class HandlerStubTests(unittest.TestCase):
         handler = _make_handler_stub(_BrokenPipeWfile())
         chunk = {
             "id": "stream",
-            "model": "deepseek-v4-pro",
+            "model": "gpt-5.4",
             "choices": [{"index": 0, "delta": {"role": "assistant", "content": "hi"}}],
         }
         response = _FakeStreamingResponse(
@@ -288,32 +279,18 @@ class HandlerStubTests(unittest.TestCase):
                 b"data: [DONE]\n\n",
             ]
         )
-        try:
-            with self.assertLogs("copilot_gpt_proxy", level="WARNING") as captured:
-                result = handler._proxy_streaming_response(
-                    response,
-                    "deepseek-v4-pro",
-                    [{"role": "user", "content": "hi"}],
-                    "ns",
-                )
-        finally:
-            handler.server.reasoning_store.close()
+        with self.assertLogs("copilot_gpt_proxy", level="WARNING") as captured:
+            result = handler._proxy_streaming_response(response, "gpt-5.4")
         self.assertFalse(result.sent)
         self.assertEqual(response.readline_calls, 1)
         self.assertIn("sending streaming response chunk", "\n".join(captured.output))
 
     def test_streaming_response_handles_upstream_read_failure(self) -> None:
         handler = _make_handler_stub(BytesIO())
-        try:
-            with self.assertLogs("copilot_gpt_proxy", level="WARNING") as captured:
-                result = handler._proxy_streaming_response(
-                    _FailingStreamingResponse(),
-                    "deepseek-v4-pro",
-                    [{"role": "user", "content": "hi"}],
-                    "ns",
-                )
-        finally:
-            handler.server.reasoning_store.close()
+        with self.assertLogs("copilot_gpt_proxy", level="WARNING") as captured:
+            result = handler._proxy_streaming_response(
+                _FailingStreamingResponse(), "gpt-5.4"
+            )
         self.assertFalse(result.sent)
         self.assertIn(
             "upstream streaming response read failed", "\n".join(captured.output)
@@ -326,7 +303,7 @@ class HandlerStubTests(unittest.TestCase):
         )
         chunk = {
             "id": "stream",
-            "model": "deepseek-v4-pro",
+            "model": "gpt-5.4",
             "choices": [{"index": 0, "delta": {"reasoning_content": "Need context."}}],
         }
         response = _FakeStreamingResponse(
@@ -335,15 +312,7 @@ class HandlerStubTests(unittest.TestCase):
                 b"data: [DONE]\n\n",
             ]
         )
-        try:
-            handler._proxy_streaming_response(
-                response,
-                "deepseek-v4-pro",
-                [{"role": "user", "content": "hi"}],
-                "ns",
-            )
-        finally:
-            handler.server.reasoning_store.close()
+        handler._proxy_streaming_response(response, "gpt-5.4")
         body = wfile.getvalue().decode("utf-8")
         self.assertIn("reasoning_content", body)
         self.assertNotIn("<details>", body)
@@ -396,7 +365,7 @@ _BASE_RESPONSE: dict[str, object] = {
     "id": "x",
     "object": "chat.completion",
     "created": 1,
-    "model": "deepseek-v4-pro",
+    "model": "gpt-5.4",
     "choices": [
         {
             "index": 0,
@@ -450,8 +419,7 @@ def _post(url: str, payload: dict, api_key: str = "sk-test") -> tuple[int, dict]
 
 
 class HttpBoundaryTests(unittest.TestCase):
-    """Real-HTTP tests that don't fit the protocol suite: things the proxy
-    must do at the HTTP boundary regardless of what DeepSeek answers."""
+    """Real HTTP tests for behavior enforced at the proxy boundary."""
 
     def setUp(self) -> None:
         _PlainFakeUpstream.requests = []
@@ -461,23 +429,20 @@ class HttpBoundaryTests(unittest.TestCase):
         self.upstream = _Fixture(
             ThreadingHTTPServer(("127.0.0.1", 0), _PlainFakeUpstream)
         )
-        self.store = ReasoningStore(":memory:")
-        proxy = DeepSeekProxyServer(("127.0.0.1", 0), DeepSeekProxyHandler)
+        proxy = GPTProxyServer(("127.0.0.1", 0), GPTProxyHandler)
         proxy.config = ProxyConfig(
             upstream_base_url=self.upstream.url,
-            upstream_model="deepseek-v4-pro",
+            upstream_model="gpt-5.4",
         )
-        proxy.reasoning_store = self.store
         self.proxy = _Fixture(proxy)
 
     def tearDown(self) -> None:
         self.proxy.close()
         self.upstream.close()
-        self.store.close()
 
     def _request(self) -> dict:
         return {
-            "model": "deepseek-v4-pro",
+            "model": "gpt-5.4",
             "messages": [{"role": "user", "content": "hi"}],
         }
 
@@ -523,7 +488,7 @@ class HttpBoundaryTests(unittest.TestCase):
             f"{self.proxy.url}/v1/chat/completions",
             data=json.dumps(
                 {
-                    "model": "deepseek-v4-pro",
+                    "model": "gpt-5.4",
                     "stream": True,
                     "messages": [{"role": "user", "content": "stream"}],
                 }
@@ -556,8 +521,7 @@ class HttpBoundaryTests(unittest.TestCase):
                 time.sleep(0.01)
         output = "\n".join(captured.output)
         self.assertEqual(status, 200)
-        self.assertIn("┌ request model=deepseek-v4-pro effort=max messages=1", output)
-        self.assertIn("├ context status=ok reasoning_context=0", output)
+        self.assertIn("┌ request model=gpt-5.4 effort=max messages=1", output)
         self.assertIn("└ stats", output)
         self.assertNotIn(" tools=", output)
         self.assertNotIn("├ send", output)

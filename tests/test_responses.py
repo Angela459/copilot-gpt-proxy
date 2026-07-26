@@ -8,7 +8,6 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from copilot_gpt_proxy.config import ProxyConfig
-from copilot_gpt_proxy.reasoning_store import ReasoningStore
 from copilot_gpt_proxy.responses import (
     has_custom_apply_patch_tool,
     inspect_responses_body,
@@ -17,7 +16,7 @@ from copilot_gpt_proxy.responses import (
     restore_custom_apply_patch_response,
     rewrite_responses_model,
 )
-from copilot_gpt_proxy.server import DeepSeekProxyHandler, DeepSeekProxyServer
+from copilot_gpt_proxy.server import GPTProxyHandler, GPTProxyServer
 
 
 def _event(event: dict) -> bytes:
@@ -422,21 +421,18 @@ class ResponsesIntegrationTests(unittest.TestCase):
         self.upstream = _Fixture(
             ThreadingHTTPServer(("127.0.0.1", 0), _ResponsesUpstream)
         )
-        self.store = ReasoningStore(":memory:")
-        proxy = DeepSeekProxyServer(("127.0.0.1", 0), DeepSeekProxyHandler)
+        proxy = GPTProxyServer(("127.0.0.1", 0), GPTProxyHandler)
         proxy.config = ProxyConfig(
             upstream_base_url=self.upstream.url,
             upstream_model="gpt-5.4",
             display_reasoning=False,
         )
-        proxy.reasoning_store = self.store
         proxy.trace_writer = None
         self.proxy = _Fixture(proxy)
 
     def tearDown(self) -> None:
         self.proxy.close()
         self.upstream.close()
-        self.store.close()
 
     def _post(self) -> tuple[int, bytes, str, str | None]:
         request = Request(

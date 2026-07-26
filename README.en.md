@@ -83,7 +83,7 @@ Configure the API key only in GitHub Copilot App. The proxy does not read API ke
 | `providers.<name>.base_url` | API URL beginning with `http://` or `https://` | Original OpenAI-compatible API base URL, usually ending in `/v1`. |
 | `models` | Mapping of provider names to model lists | Defines models available through each provider. Group names must exactly match names under `providers`. |
 | `models.<Provider>` | List of model names | Each name is used as both the Copilot model ID and upstream model ID. |
-| `thinking` | `enabled` / `disabled` | Enables upstream reasoning mode and reasoning-history compatibility handling. |
+| `thinking` | `enabled` / `disabled` | Enables upstream reasoning mode. |
 | `reasoning_effort` | `low` / `medium` / `high` / `max` / `xhigh` | Selects reasoning effort; the proxy maps it to a level supported upstream. |
 | `display_reasoning` | `true` / `false` | Shows reasoning content in Copilot output. |
 | `collapsible_reasoning` | `true` / `false` | Displays reasoning in a collapsible section when reasoning is visible. |
@@ -95,10 +95,6 @@ Configure the API key only in GitHub Copilot App. The proxy does not read API ke
 | `cors` | `true` / `false` | Sends permissive CORS response headers. |
 | `empty_apply_patch` | `retry_once` / `reject` / `allow` | Retries an empty `apply_patch` once, rejects it, or forwards it unchanged. |
 | `max_tool_retries` | `0` / `1` | Maximum retries for invalid tool calls; currently capped at 1. |
-| `reasoning_content_path` | File path | Reasoning-history cache database; relative paths resolve from the config directory. |
-| `missing_reasoning_strategy` | `recover` / `reject` | Recovers automatically from missing reasoning history or rejects the request. |
-| `reasoning_cache_max_age_seconds` | Seconds | Maximum reasoning-cache retention time. |
-| `reasoning_cache_max_rows` | Row count | Maximum records retained in the reasoning-cache database. |
 
 The config file must not contain `api_key` or `api_key_env`. To use a provider requiring a different key, first update the API key in Copilot App.
 

@@ -16,8 +16,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from copilot_gpt_proxy.config import ProxyConfig
-from copilot_gpt_proxy.reasoning_store import ReasoningStore
-from copilot_gpt_proxy.server import DeepSeekProxyHandler, DeepSeekProxyServer
+from copilot_gpt_proxy.server import GPTProxyHandler, GPTProxyServer
 from copilot_gpt_proxy.trace import TraceWriter
 
 
@@ -115,7 +114,7 @@ class _CannedUpstream(BaseHTTPRequestHandler):
             {
                 "id": "tool",
                 "object": "chat.completion",
-                "model": "deepseek-v4-pro",
+                "model": "gpt-5.4",
                 "choices": [
                     {
                         "index": 0,
@@ -178,22 +177,19 @@ class TraceIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
         _CannedUpstream.requests = []
         self.upstream = _Fixture(ThreadingHTTPServer(("127.0.0.1", 0), _CannedUpstream))
-        self.store = ReasoningStore(":memory:")
         self.temp_dir = TemporaryDirectory()
         self.writer = TraceWriter(self.temp_dir.name)
-        proxy = DeepSeekProxyServer(("127.0.0.1", 0), DeepSeekProxyHandler)
+        proxy = GPTProxyServer(("127.0.0.1", 0), GPTProxyHandler)
         proxy.config = ProxyConfig(
             upstream_base_url=self.upstream.url,
-            upstream_model="deepseek-v4-pro",
+            upstream_model="gpt-5.4",
         )
-        proxy.reasoning_store = self.store
         proxy.trace_writer = self.writer
         self.proxy = _Fixture(proxy)
 
     def tearDown(self) -> None:
         self.proxy.close()
         self.upstream.close()
-        self.store.close()
         self.temp_dir.cleanup()
 
     def _post(self, payload: dict) -> dict:
@@ -242,7 +238,7 @@ class TraceIntegrationTests(unittest.TestCase):
     def test_captures_non_streaming_replay_without_api_key(self) -> None:
         self._post(
             {
-                "model": "deepseek-v4-pro",
+                "model": "gpt-5.4",
                 "messages": [{"role": "user", "content": "What is tomorrow's date?"}],
             }
         )
@@ -266,7 +262,7 @@ class TraceIntegrationTests(unittest.TestCase):
             f"{self.proxy.url}/v1/chat/completions",
             data=json.dumps(
                 {
-                    "model": "deepseek-v4-pro",
+                    "model": "gpt-5.4",
                     "stream": True,
                     "messages": [{"role": "user", "content": "stream"}],
                 }
@@ -289,12 +285,10 @@ class TraceIntegrationTests(unittest.TestCase):
             "<details>", trace["cursor_response"]["stream"]["chunks"][0]["line"]
         )
 
-    def test_captures_recovery_diagnostics(self) -> None:
-        """A request that triggers cold-cache recovery records the recovery
-        steps + diagnostic counters in the trace."""
+    def test_trace_preserves_tool_history(self) -> None:
         self._post(
             {
-                "model": "deepseek-v4-pro",
+                "model": "gpt-5.4",
                 "messages": [
                     {"role": "user", "content": "old"},
                     {
@@ -314,19 +308,11 @@ class TraceIntegrationTests(unittest.TestCase):
             }
         )
         trace = _read_single_trace(self.writer.session_dir)
-        self.assertEqual(
-            trace["transform"]["recovery_steps"][0]["strategy"], "latest_user"
-        )
-        self.assertGreaterEqual(
-            len(
-                [
-                    item
-                    for item in trace["transform"]["reasoning_diagnostics"]
-                    if item["missing"]
-                ]
-            ),
-            1,
-        )
+        messages = trace["transform"]["upstream_request_body"]["messages"]
+        self.assertEqual(len(messages), 4)
+        self.assertEqual(messages[1]["tool_calls"][0]["id"], "call_x")
+        self.assertEqual(messages[2]["tool_call_id"], "call_x")
+        self.assertEqual(messages[2]["content"], "result")
 
 
 if __name__ == "__main__":

@@ -92,7 +92,6 @@ def message_summaries(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 if isinstance(tool_call, dict) and tool_call.get("id"):
                     tool_call_ids.append(str(tool_call["id"]))
         reasoning = message.get("reasoning_content")
-        content = str(message.get("content") or "")
         summary: dict[str, Any] = {
             "index": index,
             "role": message.get("role"),
@@ -103,12 +102,6 @@ def message_summaries(payload: dict[str, Any]) -> list[dict[str, Any]]:
             "has_reasoning_content": isinstance(reasoning, str),
             "reasoning_content_length": (
                 len(reasoning) if isinstance(reasoning, str) else 0
-            ),
-            "has_recovery_notice": content.startswith(
-                (
-                    "[copilot-gpt-proxy] Refreshed reasoning_content history.",
-                    "[copilot-gpt-proxy] Recovered",
-                )
             ),
         }
         summaries.append(summary)
@@ -250,20 +243,6 @@ class TraceRequest:
             "upstream_model": prepared.upstream_model,
             "provider": prepared.provider_name,
             "upstream_base_url": prepared.upstream_base_url,
-            "cache_namespace": prepared.cache_namespace,
-            "patched_reasoning_messages": prepared.patched_reasoning_messages,
-            "missing_reasoning_messages": prepared.missing_reasoning_messages,
-            "recovered_reasoning_messages": prepared.recovered_reasoning_messages,
-            "recovery_dropped_messages": prepared.recovery_dropped_messages,
-            "recovery_notice": prepared.recovery_notice,
-            "record_response_scope": prepared.record_response_scope,
-            "record_response_scopes": [
-                scope for scope, _messages in prepared.record_response_contexts
-            ],
-            "continued_recovery_boundary": prepared.continued_recovery_boundary,
-            "retired_prefix_messages": prepared.retired_prefix_messages,
-            "reasoning_diagnostics": prepared.reasoning_diagnostics,
-            "recovery_steps": prepared.recovery_steps,
             "upstream_request_summary": payload_summary(prepared.payload),
             "upstream_request_body": prepared.payload,
         }

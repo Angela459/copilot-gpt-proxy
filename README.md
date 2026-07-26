@@ -83,7 +83,7 @@ API Key 只在 GitHub Copilot App 中配置。代理不会从 `config.yaml` 或�
 | `providers.<名称>.base_url` | 以 `http://` 或 `https://` 开头的 API 地址 | Provider 的原始 OpenAI 兼容 API Base URL，通常以 `/v1` 结尾。 |
 | `models` | Provider 名称到模型列表的映射 | 定义每个 Provider 可使用的模型；分组名称必须与 `providers` 中的名称完全一致。 |
 | `models.<Provider>` | 模型名称列表 | 同时作为 Copilot 模型 ID 和上游请求中的模型 ID。 |
-| `thinking` | `enabled` / `disabled` | 是否启用上游推理模式及其历史兼容处理。 |
+| `thinking` | `enabled` / `disabled` | 是否启用上游推理模式。 |
 | `reasoning_effort` | `low` / `medium` / `high` / `max` / `xhigh` | 指定推理强度；代理会转换为上游支持的等级。 |
 | `display_reasoning` | `true` / `false` | 是否在 Copilot 输出中显示推理内容。 |
 | `collapsible_reasoning` | `true` / `false` | 显示推理内容时，是否使用可折叠区域。 |
@@ -95,10 +95,6 @@ API Key 只在 GitHub Copilot App 中配置。代理不会从 `config.yaml` 或�
 | `cors` | `true` / `false` | 是否返回允许跨域访问的 CORS 响应头。 |
 | `empty_apply_patch` | `retry_once` / `reject` / `allow` | 空 `apply_patch` 调用的处理策略：重试一次、直接拒绝或原样放行。 |
 | `max_tool_retries` | `0` / `1` | 错误工具调用最多重试几次；当前上限为 1。 |
-| `reasoning_content_path` | 文件路径 | 推理历史缓存数据库位置；相对路径以配置文件所在目录为基准。 |
-| `missing_reasoning_strategy` | `recover` / `reject` | 历史推理内容缺失时自动恢复，或直接拒绝请求。 |
-| `reasoning_cache_max_age_seconds` | 秒数 | 推理缓存的最长保留时间。 |
-| `reasoning_cache_max_rows` | 行数 | 推理缓存数据库最多保留的记录数。 |
 
 配置文件中不能出现 `api_key` 或 `api_key_env`；如需切换使用不同 Key 的 Provider，请先在 Copilot App 中改为对应 Provider 的 API Key。
 

@@ -4,9 +4,6 @@ from dataclasses import dataclass, field
 import time
 from typing import Any
 
-from .reasoning_store import ReasoningStore
-
-
 THINKING_BLOCK_START = "<think>\n"
 THINKING_BLOCK_END = "\n</think>\n\n"
 COLLAPSIBLE_THINKING_BLOCK_START = "<details>\n<summary>Thinking</summary>\n\n"
@@ -37,7 +34,6 @@ class StreamingChoice:
 class StreamAccumulator:
     def __init__(self) -> None:
         self.choices: dict[int, StreamingChoice] = {}
-        self._stored_choices: dict[tuple[int, str], str] = {}
 
     def ingest_chunk(self, chunk: dict[str, Any]) -> None:
         choices = chunk.get("choices")
@@ -71,72 +67,6 @@ class StreamAccumulator:
                 choice.reasoning_content += reasoning_content
 
             self._merge_tool_call_deltas(choice, delta.get("tool_calls"))
-
-    def store_reasoning(
-        self,
-        store: ReasoningStore,
-        scope: str,
-        cache_namespace: str = "",
-        prior_messages: list[dict[str, Any]] | None = None,
-    ) -> int:
-        stored = 0
-        for index, choice in self.choices.items():
-            stored += self._store_choice(
-                index, choice, store, scope, "final", cache_namespace, prior_messages
-            )
-        return stored
-
-    def store_finished_reasoning(
-        self,
-        store: ReasoningStore,
-        scope: str,
-        cache_namespace: str = "",
-        prior_messages: list[dict[str, Any]] | None = None,
-    ) -> int:
-        stored = 0
-        for index, choice in self.choices.items():
-            if choice.finish_reason is not None:
-                stored += self._store_choice(
-                    index,
-                    choice,
-                    store,
-                    scope,
-                    "final",
-                    cache_namespace,
-                    prior_messages,
-                )
-        return stored
-
-    def store_ready_reasoning(
-        self,
-        store: ReasoningStore,
-        scope: str,
-        cache_namespace: str = "",
-        prior_messages: list[dict[str, Any]] | None = None,
-    ) -> int:
-        stored = 0
-        for index, choice in self.choices.items():
-            if choice.finish_reason is not None:
-                stored += self._store_choice(
-                    index,
-                    choice,
-                    store,
-                    scope,
-                    "final",
-                    cache_namespace,
-                    prior_messages,
-                )
-            elif self._has_identified_tool_calls(choice):
-                stored += self._store_choice(
-                    index,
-                    choice,
-                    store,
-                    scope,
-                    "tool_call",
-                    cache_namespace,
-                    prior_messages,
-                )
-        return stored
 
     def messages(self) -> list[dict[str, Any]]:
         return [choice.to_message() for _, choice in sorted(self.choices.items())]
@@ -180,39 +110,8 @@ class StreamAccumulator:
                     function_delta["arguments"]
                 )
 
-    def _store_choice(
-        self,
-        index: int,
-        choice: StreamingChoice,
-        store: ReasoningStore,
-        scope: str,
-        stage: str = "final",
-        cache_namespace: str = "",
-        prior_messages: list[dict[str, Any]] | None = None,
-    ) -> int:
-        stage_rank = {"tool_call": 1, "final": 2}
-        storage_key = (index, scope)
-        previous_stage = self._stored_choices.get(storage_key)
-        if stage_rank.get(previous_stage or "", 0) >= stage_rank.get(stage, 0):
-            return 0
-        stored = store.store_assistant_message(
-            choice.to_message(),
-            scope,
-            cache_namespace,
-            prior_messages,
-        )
-        if stored:
-            self._stored_choices[storage_key] = stage
-        return stored
-
-    def _has_identified_tool_calls(self, choice: StreamingChoice) -> bool:
-        if not choice.has_reasoning_content or not choice.tool_calls:
-            return False
-        return all(bool(tool_call.get("id")) for tool_call in choice.tool_calls)
-
-
-class CursorReasoningDisplayAdapter:
-    """Mirror reasoning_content into content for Cursor's visible thinking UI path."""
+class CopilotReasoningDisplayAdapter:
+    """Mirror provider reasoning output into Copilot-visible content."""
 
     def __init__(self, collapsible: bool = True) -> None:
         self._open_choices: set[int] = set()

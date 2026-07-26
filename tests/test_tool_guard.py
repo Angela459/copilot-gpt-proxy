@@ -8,8 +8,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from copilot_gpt_proxy.config import ProxyConfig
-from copilot_gpt_proxy.reasoning_store import ReasoningStore
-from copilot_gpt_proxy.server import DeepSeekProxyHandler, DeepSeekProxyServer
+from copilot_gpt_proxy.server import GPTProxyHandler, GPTProxyServer
 from copilot_gpt_proxy.tool_guard import (
     REPAIR_INSTRUCTION,
     empty_apply_patch_calls,
@@ -180,21 +179,18 @@ class ToolGuardIntegrationTests(unittest.TestCase):
         _GuardUpstream.requests = []
         _GuardUpstream.always_empty = False
         self.upstream = _Fixture(ThreadingHTTPServer(("127.0.0.1", 0), _GuardUpstream))
-        self.store = ReasoningStore(":memory:")
-        proxy = DeepSeekProxyServer(("127.0.0.1", 0), DeepSeekProxyHandler)
+        proxy = GPTProxyServer(("127.0.0.1", 0), GPTProxyHandler)
         proxy.config = ProxyConfig(
             upstream_base_url=self.upstream.url,
             upstream_model="gpt-5.4",
             display_reasoning=False,
         )
-        proxy.reasoning_store = self.store
         proxy.trace_writer = None
         self.proxy = _Fixture(proxy)
 
     def tearDown(self) -> None:
         self.proxy.close()
         self.upstream.close()
-        self.store.close()
 
     def _post(self, stream: bool = False) -> tuple[int, bytes, str]:
         request = Request(
