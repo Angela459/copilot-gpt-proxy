@@ -7,7 +7,6 @@ from typing import Any
 
 import yaml
 
-APP_DIR_NAME = ".copilot-gpt-proxy"
 CONFIG_FILE_NAME = "config.yaml"
 REASONING_CONTENT_FILE_NAME = "reasoning_content.sqlite3"
 
@@ -23,7 +22,7 @@ DEFAULT_THINKING = "enabled"
 DEFAULT_REASONING_EFFORT = "max"
 DEFAULT_DISPLAY_REASONING = True
 DEFAULT_COLLAPSIBLE_REASONING = True
-DEFAULT_NGROK = True
+DEFAULT_NGROK = False
 DEFAULT_VERBOSE = False
 DEFAULT_REQUEST_TIMEOUT = 300.0
 DEFAULT_MAX_REQUEST_BODY_BYTES = 20 * 1024 * 1024
@@ -35,10 +34,10 @@ DEFAULT_REASONING_CACHE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
 DEFAULT_REASONING_CACHE_MAX_ROWS = 100_000
 
 DEFAULT_CONFIG_HEADER = (
-    "# This file was created automatically at ~/.copilot-gpt-proxy/config.yaml."
+    "# This file was created automatically in the current directory."
 )
 DEFAULT_CONFIG_TEXT = f"""{DEFAULT_CONFIG_HEADER}
-# API keys are read from Cursor's Authorization header and forwarded upstream.
+# API keys are read from Copilot's Authorization header and forwarded upstream.
 
 # `model` is the fallback when a request has no model; Cursor's requested
 # DeepSeek model name is otherwise respected.
@@ -66,16 +65,12 @@ reasoning_cache_max_rows: {DEFAULT_REASONING_CACHE_MAX_ROWS}
 """
 
 
-def default_app_dir() -> Path:
-    return Path.home() / APP_DIR_NAME
-
-
 def default_config_path() -> Path:
-    return default_app_dir() / CONFIG_FILE_NAME
+    return Path.cwd() / CONFIG_FILE_NAME
 
 
 def default_reasoning_content_path() -> Path:
-    return default_app_dir() / REASONING_CONTENT_FILE_NAME
+    return Path.cwd() / REASONING_CONTENT_FILE_NAME
 
 
 def populate_default_config_file(config_path: Path) -> None:

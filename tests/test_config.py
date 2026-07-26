@@ -26,21 +26,20 @@ from copilot_gpt_proxy.config import (
 
 
 class ConfigTests(unittest.TestCase):
-    def test_default_paths_live_in_visible_user_app_directory(self) -> None:
-        home = Path("/tmp/home")
+    def test_default_paths_live_in_current_directory(self) -> None:
+        project_dir = Path("/tmp/copilot-gpt-proxy")
 
-        with patch("copilot_gpt_proxy.config.Path.home", return_value=home):
-            self.assertEqual(
-                default_config_path(), home / ".copilot-gpt-proxy" / "config.yaml"
-            )
+        with patch("copilot_gpt_proxy.config.Path.cwd", return_value=project_dir):
+            self.assertEqual(default_config_path(), project_dir / "config.yaml")
             self.assertEqual(
                 default_reasoning_content_path(),
-                home / ".copilot-gpt-proxy" / "reasoning_content.sqlite3",
+                project_dir / "reasoning_content.sqlite3",
             )
             self.assertEqual(
                 ProxyConfig().reasoning_content_path,
-                home / ".copilot-gpt-proxy" / "reasoning_content.sqlite3",
+                project_dir / "reasoning_content.sqlite3",
             )
+            self.assertFalse(DEFAULT_NGROK)
             self.assertEqual(ProxyConfig().ngrok, DEFAULT_NGROK)
             self.assertIsNone(ProxyConfig().ngrok_url)
             self.assertEqual(
@@ -53,9 +52,9 @@ class ConfigTests(unittest.TestCase):
 
     def test_missing_default_config_file_is_populated(self) -> None:
         with TemporaryDirectory() as temp_dir:
-            home = Path(temp_dir)
+            project_dir = Path(temp_dir)
 
-            with patch("copilot_gpt_proxy.config.Path.home", return_value=home):
+            with patch("copilot_gpt_proxy.config.Path.cwd", return_value=project_dir):
                 config = ProxyConfig.from_file(config_path=None)
                 config_path = default_config_path()
 
@@ -281,9 +280,7 @@ class ConfigTests(unittest.TestCase):
                     },
                     clear=True,
                 ),
-                patch(
-                    "copilot_gpt_proxy.config.Path.home", return_value=Path(temp_dir)
-                ),
+                patch("copilot_gpt_proxy.config.Path.cwd", return_value=Path(temp_dir)),
             ):
                 config = ProxyConfig.from_file(config_path=config_path)
                 self.assertEqual(

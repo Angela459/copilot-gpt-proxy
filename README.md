@@ -18,54 +18,38 @@ uv sync
 
 ## 配置
 
-首次启动会创建配置文件：
+仓库提供可提交的配置模板：
 
 ```text
-~/.copilot-gpt-proxy/config.yaml
+config.example.yaml
 ```
 
-Windows 下通常位于：
+真实配置由启动脚本生成在仓库根目录，并已加入 `.gitignore`：
 
 ```text
-C:\Users\你的用户名\.copilot-gpt-proxy\config.yaml
+config.yaml
 ```
 
-填写第三方 API 地址和要使用的模型：
-
-```yaml
-base_url: https://你的第三方接口地址/v1
-model: 你的模型ID
-
-host: 127.0.0.1
-port: 9000
-ngrok: false
-```
-
-API Key 默认从 Copilot 请求中读取并转发，请勿将真实密钥提交到仓库。
-
-## 连接 Copilot App
-
-本项目不会扫描磁盘或自动查找 Copilot 安装目录。请明确指定 Copilot 使用的 `settings.json` 和模型 ID：
+首次运行：
 
 ```powershell
-uv run copilot-gpt-proxy `
-  --copilot-settings "$env:APPDATA\Code\User\settings.json" `
-  --copilot-model-id 你的模型ID
+.\start.ps1
 ```
 
-只检查配置、不启动代理：
+脚本会让用户选择包含 `settings.json` 的 Copilot 配置目录，只检查用户选择的目录，并列出其中可用模型。选择模型后会生成 `config.yaml` 并启动代理。API Key 默认从 Copilot 请求中读取并转发，不会写入配置文件。
+
+重新选择目录或模型：
 
 ```powershell
-uv run copilot-gpt-proxy `
-  --inspect-copilot-settings "$env:APPDATA\Code\User\settings.json"
+.\start.ps1 -Reconfigure
 ```
 
-程序只读取用户明确指定的配置文件，不扫描目录、不访问 VS Code SecretStorage，也不会输出 API Key 或自定义请求头。
+程序不会扫描磁盘、访问 VS Code SecretStorage，或输出 API Key 和自定义请求头。
 
 ## 启动
 
 ```powershell
-uv run copilot-gpt-proxy --no-ngrok --port 9000
+.\start.ps1
 ```
 
 默认本地地址：
@@ -74,4 +58,10 @@ uv run copilot-gpt-proxy --no-ngrok --port 9000
 http://127.0.0.1:9000/v1
 ```
 
-只有 Copilot 无法访问本地地址时，才需要使用 ngrok 或其他 HTTPS 隧道。
+ngrok 默认关闭。只有 Copilot 无法访问本地地址时才需要显式启用：
+
+```powershell
+.\start.ps1 -EnableNgrok
+```
+
+代理与 Copilot 打开的业务项目相互独立。启动顺序没有严格限制，但在 Copilot 发出模型请求前，代理必须保持运行；同一个代理进程可以服务 Copilot 当前打开的任意业务项目。

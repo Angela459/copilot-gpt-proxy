@@ -1,0 +1,26 @@
+# Copy this file to config.yaml or run .\start.ps1 to generate it.
+# config.yaml is intentionally ignored by Git.
+
+base_url: "__BASE_URL__"
+model: "__MODEL_ID__"
+
+thinking: enabled
+reasoning_effort: max
+display_reasoning: true
+collapsible_reasoning: true
+
+host: 127.0.0.1
+port: 9000
+ngrok: __NGROK__
+verbose: false
+request_timeout: 300
+max_request_body_bytes: 20971520
+cors: false
+
+empty_apply_patch: retry_once
+max_tool_retries: 1
+
+reasoning_content_path: reasoning_content.sqlite3
+missing_reasoning_strategy: recover
+reasoning_cache_max_age_seconds: 2592000
+reasoning_cache_max_rows: 100000

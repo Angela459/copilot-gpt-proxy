@@ -18,54 +18,38 @@ uv sync
 
 ## Configuration
 
-The first run creates:
+A tracked configuration template is provided:
 
 ```text
-~/.copilot-gpt-proxy/config.yaml
+config.example.yaml
 ```
 
-On Windows, this is usually:
+The startup script generates the real configuration in the repository root. It is ignored by Git:
 
 ```text
-C:\Users\your-name\.copilot-gpt-proxy\config.yaml
+config.yaml
 ```
 
-Set the third-party API URL and model:
-
-```yaml
-base_url: https://your-provider.example/v1
-model: your-model-id
-
-host: 127.0.0.1
-port: 9000
-ngrok: false
-```
-
-The API key is read from the Copilot request and forwarded by default. Do not commit real keys to the repository.
-
-## Connect Copilot App
-
-This project does not scan disks or search for Copilot installations. Explicitly provide the `settings.json` file used by Copilot and the model ID:
+First run:
 
 ```powershell
-uv run copilot-gpt-proxy `
-  --copilot-settings "$env:APPDATA\Code\User\settings.json" `
-  --copilot-model-id your-model-id
+.\start.ps1
 ```
 
-Inspect the configuration without starting the proxy:
+The script asks the user to select the Copilot configuration directory containing `settings.json`, inspects only that directory, and lists the available models. After selection it generates `config.yaml` and starts the proxy. API keys are read from Copilot requests and are never written to the generated configuration.
+
+Select a different directory or model:
 
 ```powershell
-uv run copilot-gpt-proxy `
-  --inspect-copilot-settings "$env:APPDATA\Code\User\settings.json"
+.\start.ps1 -Reconfigure
 ```
 
-The program reads only the file explicitly selected by the user. It does not enumerate directories, access VS Code SecretStorage, or print API keys or custom headers.
+The program does not scan disks, access VS Code SecretStorage, or print API keys or custom headers.
 
 ## Start
 
 ```powershell
-uv run copilot-gpt-proxy --no-ngrok --port 9000
+.\start.ps1
 ```
 
 Default local URL:
@@ -74,4 +58,10 @@ Default local URL:
 http://127.0.0.1:9000/v1
 ```
 
-Use ngrok or another HTTPS tunnel only when Copilot cannot access the local URL.
+ngrok is disabled by default. Enable it explicitly only when Copilot cannot access the local URL:
+
+```powershell
+.\start.ps1 -EnableNgrok
+```
+
+The proxy is independent of the business project opened in Copilot. There is no strict startup order, but the proxy must be running before Copilot sends a model request. One proxy process can serve whichever business project Copilot currently has open.
