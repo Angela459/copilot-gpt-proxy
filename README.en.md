@@ -18,11 +18,7 @@ uv sync
 
 ## Manual Configuration
 
-Copy the configuration template:
-
-```powershell
-Copy-Item config.example.yaml config.yaml
-```
+Make a copy of `config.example.yaml` and rename the copy to `config.yaml`.
 
 Open `config.yaml` and enter the original third-party API URL and model:
 
@@ -31,12 +27,10 @@ base_url: "https://your-provider.example/v1"
 model: "gpt-5.4"
 ```
 
-The API key does not need to be stored in `config.yaml`.
-
 Start the proxy:
 
 ```powershell
-uv run copilot-gpt-proxy --config config.yaml --no-ngrok
+uv run copilot-gpt-proxy
 ```
 
 The terminal prints the proxy URL after startup:
@@ -48,14 +42,6 @@ api_base_url: http://127.0.0.1:9000/v1
 In the third-party API settings of GitHub Copilot App, manually change API Base URL to the displayed `api_base_url`. Keep the existing API key and use the same model as `model` in `config.yaml`.
 
 The proxy is independent of the code directory opened in Copilot, but it must remain running while Copilot sends requests.
-
-To use ngrok, run manually:
-
-```powershell
-uv run copilot-gpt-proxy --config config.yaml --ngrok
-```
-
-Then change the Copilot App API Base URL to the new `api_base_url` shown in the terminal.
 
 ## Acknowledgements
 

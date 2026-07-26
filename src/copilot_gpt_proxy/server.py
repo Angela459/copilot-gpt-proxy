@@ -43,7 +43,6 @@ from .tool_guard import (
     messages_from_completion,
     repair_request,
 )
-from .tunnel import NgrokTunnel, local_tunnel_target
 from .transform import (
     RECOVERY_NOTICE_CONTENT,
     prepare_upstream_request,
@@ -1257,20 +1256,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--ngrok",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help="Start an ngrok tunnel and print the Cursor base URL",
-    )
-    parser.add_argument(
-        "--ngrok-url",
-        metavar="URL",
-        help=(
-            "Pass --url=URL to ngrok (reserved endpoint / custom domain); "
-            "see `ngrok http --help`"
-        ),
-    )
-    parser.add_argument(
         "--verbose",
         action=argparse.BooleanOptionalAction,
         default=None,
@@ -1650,11 +1635,6 @@ def main(argv: list[str] | None = None) -> int:
         updates["reasoning_effort"] = args.reasoning_effort
     if args.reasoning_content_path is not None:
         updates["reasoning_content_path"] = args.reasoning_content_path
-    if args.ngrok is not None:
-        updates["ngrok"] = args.ngrok
-    if args.ngrok_url is not None:
-        stripped = str(args.ngrok_url).strip()
-        updates["ngrok_url"] = stripped if stripped else None
     if args.verbose is not None:
         updates["verbose"] = args.verbose
     if args.trace_dir is not None:
@@ -1709,22 +1689,7 @@ def main(argv: list[str] | None = None) -> int:
     server.reasoning_store = store
     server.trace_writer = trace_writer
 
-    tunnel: NgrokTunnel | None = None
-    public_url: str | None = None
-    if config.ngrok:
-        target_url = local_tunnel_target(config.host, config.port)
-        tunnel = NgrokTunnel(target_url, ngrok_url=config.ngrok_url)
-        try:
-            public_url = tunnel.start()
-        except RuntimeError as exc:
-            LOG.error("%s", exc)
-            server.server_close()
-            store.close()
-            return 2
     local_base_url = f"http://{config.host}:{config.port}/v1"
-    api_base_url = (
-        f"{public_url.rstrip('/')}/v1" if public_url is not None else local_base_url
-    )
     LOG.info(
         "default_model: %s (%s, %s)",
         config.upstream_model,
@@ -1747,19 +1712,15 @@ def main(argv: list[str] | None = None) -> int:
     if trace_writer is not None:
         LOG.info("trace_dir: %s", trace_writer.session_dir)
         LOG.warning("trace logging enabled; prompts and code will be written to disk")
-    if public_url is None and not config.ngrok:
-        LOG.info("public_tunnel: off")
     if config.verbose:
         LOG.info("upstream_url: %s/chat/completions", config.upstream_base_url)
     LOG.info("local_base_url: %s", local_base_url)
-    LOG.info("api_base_url: %s", api_base_url)
+    LOG.info("api_base_url: %s", local_base_url)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         LOG.info("shutting down")
     finally:
-        if tunnel is not None:
-            tunnel.stop()
         server.server_close()
         store.close()
     return 0

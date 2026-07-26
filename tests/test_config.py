@@ -12,7 +12,6 @@ from copilot_gpt_proxy.config import (
     DEFAULT_EMPTY_APPLY_PATCH,
     DEFAULT_MAX_TOOL_RETRIES,
     DEFAULT_MISSING_REASONING_STRATEGY,
-    DEFAULT_NGROK,
     DEFAULT_PORT,
     DEFAULT_REASONING_CACHE_MAX_AGE_SECONDS,
     DEFAULT_REASONING_CACHE_MAX_ROWS,
@@ -39,9 +38,6 @@ class ConfigTests(unittest.TestCase):
                 ProxyConfig().reasoning_content_path,
                 project_dir / "reasoning_content.sqlite3",
             )
-            self.assertFalse(DEFAULT_NGROK)
-            self.assertEqual(ProxyConfig().ngrok, DEFAULT_NGROK)
-            self.assertIsNone(ProxyConfig().ngrok_url)
             self.assertEqual(
                 ProxyConfig().collapsible_reasoning,
                 DEFAULT_COLLAPSIBLE_REASONING,
@@ -75,7 +71,6 @@ class ConfigTests(unittest.TestCase):
                 f"reasoning_cache_max_rows: {DEFAULT_REASONING_CACHE_MAX_ROWS}",
                 config_text,
             )
-            self.assertIn(f"ngrok: {str(DEFAULT_NGROK).lower()}", config_text)
             self.assertIn(
                 f"empty_apply_patch: {DEFAULT_EMPTY_APPLY_PATCH}", config_text
             )
@@ -88,7 +83,6 @@ class ConfigTests(unittest.TestCase):
             if os.name != "nt":
                 self.assertEqual(stat.S_IMODE(config_path.stat().st_mode), 0o600)
             self.assertEqual(config.upstream_model, DEFAULT_UPSTREAM_MODEL)
-            self.assertEqual(config.ngrok, DEFAULT_NGROK)
             self.assertEqual(
                 config.collapsible_reasoning,
                 DEFAULT_COLLAPSIBLE_REASONING,
@@ -112,7 +106,6 @@ class ConfigTests(unittest.TestCase):
 
             self.assertFalse(config_path.exists())
             self.assertEqual(config.upstream_model, DEFAULT_UPSTREAM_MODEL)
-            self.assertEqual(config.ngrok, DEFAULT_NGROK)
             self.assertEqual(
                 config.reasoning_cache_max_age_seconds,
                 DEFAULT_REASONING_CACHE_MAX_AGE_SECONDS,
@@ -134,7 +127,6 @@ class ConfigTests(unittest.TestCase):
                         "reasoning_effort: max",
                         "port: 9100",
                         "host: 0.0.0.0",
-                        "ngrok: true",
                         "verbose: true",
                         "request_timeout: 123.5",
                         "max_request_body_bytes: 1234",
@@ -145,7 +137,6 @@ class ConfigTests(unittest.TestCase):
                         "missing_reasoning_strategy: reject",
                         "reasoning_cache_max_age_seconds: 60",
                         "reasoning_cache_max_rows: 50",
-                        "ngrok_url: https://example.ngrok.dev",
                         "empty_apply_patch: reject",
                         "max_tool_retries: 0",
                     ]
@@ -161,7 +152,6 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.reasoning_effort, "max")
         self.assertEqual(config.host, "0.0.0.0")
         self.assertEqual(config.port, 9100)
-        self.assertTrue(config.ngrok)
         self.assertTrue(config.verbose)
         self.assertEqual(config.request_timeout, 123.5)
         self.assertEqual(config.max_request_body_bytes, 1234)
@@ -172,7 +162,6 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.missing_reasoning_strategy, "reject")
         self.assertEqual(config.reasoning_cache_max_age_seconds, 60)
         self.assertEqual(config.reasoning_cache_max_rows, 50)
-        self.assertEqual(config.ngrok_url, "https://example.ngrok.dev")
         self.assertEqual(config.empty_apply_patch, "reject")
         self.assertEqual(config.max_tool_retries, 0)
 
@@ -199,19 +188,11 @@ class ConfigTests(unittest.TestCase):
             config.missing_reasoning_strategy, DEFAULT_MISSING_REASONING_STRATEGY
         )
         self.assertEqual(config.port, DEFAULT_PORT)
-        self.assertEqual(config.ngrok, DEFAULT_NGROK)
         self.assertEqual(config.verbose, DEFAULT_VERBOSE)
         self.assertEqual(
             config.collapsible_reasoning,
             DEFAULT_COLLAPSIBLE_REASONING,
         )
-
-    def test_ngrok_url_empty_or_whitespace_is_none(self) -> None:
-        with TemporaryDirectory() as temp_dir:
-            config_path = Path(temp_dir) / "config.yaml"
-            config_path.write_text('ngrok_url: "   "\n', encoding="utf-8")
-            config = ProxyConfig.from_file(config_path=config_path)
-        self.assertIsNone(config.ngrok_url)
 
     def test_relative_reasoning_content_path_in_config_is_relative_to_config_file(
         self,

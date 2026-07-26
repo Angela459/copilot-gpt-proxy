@@ -402,7 +402,6 @@ class ResponsesIntegrationTests(unittest.TestCase):
         proxy.config = ProxyConfig(
             upstream_base_url=self.upstream.url,
             upstream_model="gpt-5.4",
-            ngrok=False,
             display_reasoning=False,
         )
         proxy.reasoning_store = self.store

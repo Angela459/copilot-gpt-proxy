@@ -265,7 +265,6 @@ def _start_proxy(
     proxy.config = ProxyConfig(
         upstream_base_url=upstream_url,
         upstream_model="deepseek-v4-pro",
-        ngrok=False,
         verbose=False,
         cors=False,
         **config_overrides,

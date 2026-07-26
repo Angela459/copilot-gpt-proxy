@@ -22,7 +22,6 @@ DEFAULT_THINKING = "enabled"
 DEFAULT_REASONING_EFFORT = "max"
 DEFAULT_DISPLAY_REASONING = True
 DEFAULT_COLLAPSIBLE_REASONING = True
-DEFAULT_NGROK = False
 DEFAULT_VERBOSE = False
 DEFAULT_REQUEST_TIMEOUT = 300.0
 DEFAULT_MAX_REQUEST_BODY_BYTES = 20 * 1024 * 1024
@@ -50,7 +49,6 @@ collasible_reasoning: {str(DEFAULT_COLLAPSIBLE_REASONING).lower()}
 
 host: {DEFAULT_HOST}
 port: {DEFAULT_PORT}
-ngrok: {str(DEFAULT_NGROK).lower()}
 verbose: {str(DEFAULT_VERBOSE).lower()}
 request_timeout: {DEFAULT_REQUEST_TIMEOUT:g}
 max_request_body_bytes: {DEFAULT_MAX_REQUEST_BODY_BYTES}
@@ -116,13 +114,6 @@ def as_str(value: Any, default: str) -> str:
     if value is MISSING or value is None:
         return default
     return str(value)
-
-
-def as_optional_str(value: Any) -> str | None:
-    if value is MISSING or value is None:
-        return None
-    stripped = str(value).strip()
-    return stripped if stripped else None
 
 
 def as_bool(value: Any, default: bool) -> bool:
@@ -217,8 +208,6 @@ class ProxyConfig:
     collapsible_reasoning: bool = DEFAULT_COLLAPSIBLE_REASONING
     cors: bool = DEFAULT_CORS
     verbose: bool = DEFAULT_VERBOSE
-    ngrok: bool = DEFAULT_NGROK
-    ngrok_url: str | None = None
     trace_dir: Path | None = None
 
     @classmethod
@@ -308,9 +297,4 @@ class ProxyConfig:
                 setting_value(settings, "verbose"),
                 DEFAULT_VERBOSE,
             ),
-            ngrok=as_bool(
-                setting_value(settings, "ngrok"),
-                DEFAULT_NGROK,
-            ),
-            ngrok_url=as_optional_str(setting_value(settings, "ngrok_url")),
         )

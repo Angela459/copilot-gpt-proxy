@@ -90,7 +90,7 @@ empty_apply_patch: retry_once
 max_tool_retry: 1
 ```
 
-Environment variables are preferable for secrets. Localhost should be the default bind address. A public tunnel is only needed when the Copilot client refuses a local custom endpoint; it should not be enabled by default for local development.
+Environment variables are preferable for secrets. Localhost should be the default bind address.
 
 ## Test plan
 

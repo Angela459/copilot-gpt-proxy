@@ -124,7 +124,6 @@ class CliAndHelperTests(unittest.TestCase):
     def test_cli_boolean_flags_have_on_and_off_forms(self) -> None:
         args = build_arg_parser().parse_args(
             [
-                "--no-ngrok",
                 "--no-verbose",
                 "--no-display-reasoning",
                 "--no-collasible-resoning",
@@ -133,18 +132,11 @@ class CliAndHelperTests(unittest.TestCase):
                 "/tmp/dcp-traces",
             ]
         )
-        self.assertFalse(args.ngrok)
         self.assertFalse(args.verbose)
         self.assertFalse(args.display_reasoning)
         self.assertFalse(args.collapsible_reasoning)
         self.assertTrue(args.cors)
         self.assertEqual(args.trace_dir, Path("/tmp/dcp-traces"))
-
-    def test_cli_accepts_ngrok_url(self) -> None:
-        args = build_arg_parser().parse_args(
-            ["--ngrok-url", "https://example.ngrok.app"]
-        )
-        self.assertEqual(args.ngrok_url, "https://example.ngrok.app")
 
     def test_cli_accepts_empty_apply_patch_policy(self) -> None:
         args = build_arg_parser().parse_args(
@@ -474,7 +466,6 @@ class HttpBoundaryTests(unittest.TestCase):
         proxy.config = ProxyConfig(
             upstream_base_url=self.upstream.url,
             upstream_model="deepseek-v4-pro",
-            ngrok=False,
         )
         proxy.reasoning_store = self.store
         self.proxy = _Fixture(proxy)
