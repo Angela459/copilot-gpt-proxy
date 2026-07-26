@@ -75,3 +75,7 @@ start.bat --ngrok
 ```
 
 The proxy is independent of the business project opened in Copilot. Use `start.bat` to start both the proxy and Copilot App. One proxy process can serve whichever business project Copilot currently has open.
+
+## Acknowledgements
+
+The project concept and parts of the code are based on [yxlao/deepseek-cursor-proxy](https://github.com/yxlao/deepseek-cursor-proxy). Thanks to the original author for their work.

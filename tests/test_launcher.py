@@ -33,7 +33,7 @@ class LauncherTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "github.exe"):
                 choose_copilot_app(explicit_path=settings_path)
 
-    def test_migration_removes_legacy_vs_code_settings(self) -> None:
+    def test_existing_config_keeps_legacy_fields_unchanged(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             app_path = root / "github.exe"
@@ -56,8 +56,8 @@ class LauncherTests(unittest.TestCase):
             source = config_path.read_text(encoding="utf-8")
             config = ProxyConfig.from_file(config_path)
 
-        self.assertNotIn("copilot_settings_path", source)
-        self.assertNotIn("copilot_model_id", source)
+        self.assertIn('copilot_settings_path: "C:/Code/User/settings.json"', source)
+        self.assertIn('copilot_model_id: "gpt-5.4"', source)
         self.assertEqual(config.copilot_app_path, app_path.resolve())
         self.assertTrue(config.verbose)
 

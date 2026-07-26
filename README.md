@@ -75,3 +75,7 @@ start.bat --ngrok
 ```
 
 代理与 Copilot 打开的业务项目相互独立。请通过 `start.bat` 启动代理和 Copilot App；同一个代理进程可以服务 Copilot 当前打开的任意业务项目。
+
+## 致谢
+
+项目思路与部分代码来自 [yxlao/deepseek-cursor-proxy](https://github.com/yxlao/deepseek-cursor-proxy)，感谢原项目作者的工作。

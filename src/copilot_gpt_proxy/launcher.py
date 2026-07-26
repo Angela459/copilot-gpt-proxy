@@ -103,14 +103,11 @@ def update_launcher_config(
     if model_id is not None:
         values["model"] = model_id
 
-    legacy_keys = {"copilot_settings_path", "copilot_model_id"}
     output: list[str] = []
     replaced: set[str] = set()
     for line in source.splitlines():
         stripped = line.lstrip()
         key = stripped.split(":", 1)[0] if ":" in stripped else ""
-        if key in legacy_keys:
-            continue
         if key in values and len(line) == len(stripped):
             output.append(f"{key}: {_yaml_double_quoted(values[key])}")
             replaced.add(key)
